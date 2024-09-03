@@ -71,5 +71,6 @@
         "expected": "cpp",
         "map": "cpp",
         "span": "cpp"
-    }
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

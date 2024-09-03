@@ -23,5 +23,6 @@ void main(){
 
     outColor = vec4(0.0, 0.5 * color, 1.0 * color, 1.0);
 
-    //outColor = vec4(fract(position.x + pushData.time), position.y, 0.0, 1.0);
+    // outColor = vec4(sin((position.x - 0.5)*(position.x - 0.5)+(position.y - 0.5)*(position.y - 0.5) + pushData.time), 
+    // cos((position.y - 0.5)*(position.y - 0.5)+(position.x - 0.5)*(position.x - 0.5) + 2*pushData.time), 0.0, 1.0);
 }
