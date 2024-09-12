@@ -28,18 +28,44 @@ inline vec4 operator*(mat4 const &A, vec4 const &b)
     return ret;
 }
 
+// inline mat4 operator*(mat4 const &A, mat4 const &B)
+// {
+//     mat4 ret;
+//     // compute ret = A * B:
+//     for (uint32_t c = 0; c < 4; ++c)
+//     {
+//         for (uint32_t r = 0; r < 4; ++r)
+//         {
+//             ret[c * 4 + r] = A[0 * 4 + r] * B[c * 4 + 0];
+//             for (uint32_t k = 1; k < 4; ++k)
+//             {
+//                 ret[c * 4 + r] += A[k * 4 + r] * B[c * 4 + k];
+//             }
+//         }
+//     }
+//     return ret;
+// }
+
+// Compute index of mat4 at row r and column c
+inline int index(int r, int c)
+{
+    return c * 4 + r;
+}
+
+// Compute (mat4) ret = (mat4) A * (mat4) B
+// ret[r, c] += A[r, k] * B[k, c]
 inline mat4 operator*(mat4 const &A, mat4 const &B)
 {
-    mat4 ret;
-    // compute ret = A * B:
-    for (uint32_t c = 0; c < 4; ++c)
-    {
-        for (uint32_t r = 0; r < 4; ++r)
-        {
-            ret[c * 4 + r] = A[0 * 4 + r] * B[c * 4 + 0];
-            for (uint32_t k = 1; k < 4; ++k)
-            {
-                ret[c * 4 + r] += A[k * 4 + r] * B[c * 4 + k];
+    mat4 ret = {0.0f};
+    float b_kc;
+    for (uint32_t k = 0; k < 4; ++k)
+    { // shared axis
+        for (uint32_t c = 0; c < 4; ++c)
+        { // major axis
+            b_kc = B[index(k, c)];
+            for (uint32_t r = 0; r < 4; ++r)
+            { // minor axis
+                ret[index(r, c)] += A[index(r, k)] * b_kc;
             }
         }
     }
