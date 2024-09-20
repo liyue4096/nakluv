@@ -5,7 +5,7 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "C:/VulkanSDK/1.3.290.0/Include",
-                "D:/PITTSCI/Fall2024/15472/glfw-3.4.bin.WIN64/include"
+                "D:/PITTSCI/f24/15472/glfw-3.4.bin.WIN64/include"
             ],
             "defines": [
                 "_DEBUG",

@@ -3,11 +3,11 @@
 #include "VK.hpp"
 
 static uint32_t vert_code[] =
-#include "spv/lines.vert.inl"
+#include "spv/shaders/lines.vert.inl"
     ;
 
 static uint32_t frag_code[] =
-#include "spv/lines.frag.inl"
+#include "spv/shaders/lines.frag.inl"
     ;
 
 void Tutorial::LinesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t subpass)
