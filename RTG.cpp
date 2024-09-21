@@ -29,6 +29,13 @@ void RTG::Configuration::parse(int argc, char **argv)
 		{
 			debug = false;
 		}
+		else if (arg == "--scene")
+		{
+			if (argi + 1 >= argc)
+				throw std::runtime_error("--scene requires a parameter (a scene file name).");
+			argi += 1;
+			scene_name = argv[argi];
+		}
 		else if (arg == "--physical-device")
 		{
 			if (argi + 1 >= argc)
@@ -102,6 +109,8 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 
 	// copy input configuration:
 	configuration = configuration_;
+
+	// TODO: read scene file
 
 	// fill in flags/extensions/layers information:
 

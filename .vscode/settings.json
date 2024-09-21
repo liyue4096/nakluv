@@ -70,7 +70,9 @@
         "algorithm": "cpp",
         "expected": "cpp",
         "map": "cpp",
-        "span": "cpp"
+        "span": "cpp",
+        "cstdarg": "cpp",
+        "fstream": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
