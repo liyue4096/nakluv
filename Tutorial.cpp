@@ -4,14 +4,19 @@
 #endif
 
 #include "Tutorial.hpp"
-
+#include "scene.hpp"
 #include "VK.hpp"
 #include <vulkan/vk_enum_string_helper.h>
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+
+#include <filesystem>
+
+#include "include/sejp/sejp.hpp"
 
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 {
@@ -111,28 +116,35 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 		VK(vkCreateCommandPool(rtg.device, &create_info, nullptr, &command_pool));
 	}
 
-	background_pipeline.create(rtg, render_pass, 0);
+	// load scene file .72
+	load_s72();
+
+	// background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
+	scenes_pipeline.create(rtg, render_pass, 0);
 
-	{															  // create descriptor pool:
+	// create descriptor pool:
+	{
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
 
 		std::array<VkDescriptorPoolSize, 2> pool_sizes{
 			VkDescriptorPoolSize{
+				// for camera
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 2 * per_workspace, // one descriptor per set, one set per workspace
+				.descriptorCount = 3 * per_workspace, // 3 descriptor per set, one set per workspace
 			},
 			VkDescriptorPoolSize{
+				// for transform
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 1 * per_workspace, // one descriptor per set, one set per workspace
+				.descriptorCount = 2 * per_workspace, // 2 descriptor per set, one set per workspace
 			},
 		};
 
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,					  // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
-			.maxSets = 3 * per_workspace, // three set per workspace
+			.maxSets = 6 * per_workspace, // three set per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -141,6 +153,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	}
 
 	workspaces.resize(rtg.workspaces.size());
+	std::cout << "\nworkspace size:" << workspaces.size() << "\n";
 
 	for (Workspace &workspace : workspaces)
 	{
@@ -213,6 +226,42 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
+		workspace.Scene_world_src = rtg.helpers.create_buffer(
+			sizeof(ScenesPipeline::World),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+			Helpers::Mapped																// get a pointer to the memory
+		);
+		workspace.Scene_world = rtg.helpers.create_buffer(
+			sizeof(ScenesPipeline::World),
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as a uniform buffer, also going to have GPU copy into this memory
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
+			Helpers::Unmapped													   // don't get a pointer to the memory
+		);
+
+		{ // allocate descriptor set for Scene_camera descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &scenes_pipeline.set0_World,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Scene_world_descriptors));
+		}
+
+		{ // allocate descriptor set for Transforms descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &scenes_pipeline.set1_Transforms,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Scene_transforms_descriptors));
+			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
+		}
+
 		{ // point descriptor to Camera buffer:
 			VkDescriptorBufferInfo Camera_info{
 				.buffer = workspace.Camera.handle,
@@ -226,7 +275,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 				.range = workspace.World.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 2> writes{
+			VkDescriptorBufferInfo Scene_world_info{
+				.buffer = workspace.Scene_world.handle,
+				.offset = 0,
+				.range = workspace.Scene_world.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 3> writes{
 				VkWriteDescriptorSet{
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Camera_descriptors,
@@ -245,6 +300,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 					.pBufferInfo = &World_info,
 				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Scene_world_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+					.pBufferInfo = &Scene_world_info,
+				},
 			};
 
 			vkUpdateDescriptorSets(
@@ -259,42 +323,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 	{ // create object vertices
 		std::vector<PosNorTexVertex> vertices;
-
-		// { // A [-1,1]x[-1,1]x{0} quadrilateral:
-		// 	plane_vertices.first = uint32_t(vertices.size());
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = -1.0f, .y = -1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 0.0f, .t = 0.0f},
-		// 	});
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = 1.0f, .y = -1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 1.0f, .t = 0.0f},
-		// 	});
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = -1.0f, .y = 1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 0.0f, .t = 1.0f},
-		// 	});
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = 1.0f, .y = 1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 1.0f, .t = 1.0f},
-		// 	});
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = -1.0f, .y = 1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 0.0f, .t = 1.0f},
-		// 	});
-		// 	vertices.emplace_back(PosNorTexVertex{
-		// 		.Position{.x = 1.0f, .y = -1.0f, .z = 0.0f},
-		// 		.Normal{.x = 0.0f, .y = 0.0f, .z = 1.0f},
-		// 		.TexCoord{.s = 1.0f, .t = 0.0f},
-		// 	});
-
-		// 	plane_vertices.count = uint32_t(vertices.size()) - plane_vertices.first;
-		// }
 
 		{ // A torus:
 			torus_vertices.first = uint32_t(vertices.size());
@@ -355,261 +383,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			torus_vertices.count = uint32_t(vertices.size()) - torus_vertices.first;
 		}
 
-		{ // A smaller torus rotating inside the larger one:
-			torus_vertices_1.first = uint32_t(vertices.size());
-
-			constexpr float R1_small = 0.6f;  // main radius (smaller torus)
-			constexpr float R2_small = 0.05f; // tube radius (smaller torus)
-
-			constexpr uint32_t U_STEPS = 50;
-			constexpr uint32_t V_STEPS = 40;
-
-			constexpr float V_REPEATS = 1.0f;
-			float U_REPEATS = std::ceil(V_REPEATS / R2_small * R1_small);
-
-			float rotation_angle = 0.0f; // Initial rotation angle around the x-axis
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi, float r1, float r2, float rotation_angle)
-			{
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.0f * float(M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * 2.0f * float(M_PI);
-
-				// Torus position before any transformation
-				float z = (r1 + r2 * std::cos(va)) * std::cos(ua);
-				float y = (r1 + r2 * std::cos(va)) * std::sin(ua);
-				float x = r2 * std::sin(va);
-
-				// Apply rotation around the x-axis for the smaller torus
-				float new_y = y * std::cos(rotation_angle) - z * std::sin(rotation_angle);
-				float new_z = y * std::sin(rotation_angle) + z * std::cos(rotation_angle);
-				y = new_y;
-				z = new_z;
-
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = x, .y = y, .z = z},
-					.Normal{
-						.x = std::cos(va) * std::cos(ua),
-						.y = std::cos(va) * std::sin(ua),
-						.z = std::sin(va),
-					},
-					.TexCoord{
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			// Generate the smaller torus vertices with rotation
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui)
-			{
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi)
-				{
-					emplace_vertex(ui, vi, R1_small, R2_small, rotation_angle); // For smaller torus
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi + 1, R1_small, R2_small, rotation_angle);
-				}
-			}
-
-			torus_vertices_1.count = uint32_t(vertices.size()) - torus_vertices_1.first;
-		}
-
-		{ // A smaller torus rotating inside the larger one:
-			torus_vertices_2.first = uint32_t(vertices.size());
-
-			constexpr float R1_small = 0.5f;  // main radius (smaller torus)
-			constexpr float R2_small = 0.05f; // tube radius (smaller torus)
-
-			constexpr uint32_t U_STEPS = 50;
-			constexpr uint32_t V_STEPS = 40;
-
-			constexpr float V_REPEATS = 1.0f;
-			float U_REPEATS = std::ceil(V_REPEATS / R2_small * R1_small);
-
-			float rotation_angle = 0.0f; // Initial rotation angle around the x-axis
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi, float r1, float r2, float rotation_angle)
-			{
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.0f * float(M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * 2.0f * float(M_PI);
-
-				// Torus position before any transformation
-				float x = (r1 + r2 * std::cos(va)) * std::cos(ua);
-				float z = (r1 + r2 * std::cos(va)) * std::sin(ua);
-				float y = r2 * std::sin(va);
-
-				// Apply rotation around the x-axis for the smaller torus
-				float new_y = y * std::cos(rotation_angle) - z * std::sin(rotation_angle);
-				float new_z = y * std::sin(rotation_angle) + z * std::cos(rotation_angle);
-				y = new_y;
-				z = new_z;
-
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = x, .y = y, .z = z},
-					.Normal{
-						.x = std::cos(va) * std::cos(ua),
-						.y = std::cos(va) * std::sin(ua),
-						.z = std::sin(va),
-					},
-					.TexCoord{
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			// Generate the smaller torus vertices with rotation
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui)
-			{
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi)
-				{
-					emplace_vertex(ui, vi, R1_small, R2_small, rotation_angle); // For smaller torus
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi + 1, R1_small, R2_small, rotation_angle);
-				}
-			}
-
-			torus_vertices_2.count = uint32_t(vertices.size()) - torus_vertices_2.first;
-		}
-
-		{ // A smaller torus rotating inside the larger one:
-			torus_vertices_3.first = uint32_t(vertices.size());
-
-			constexpr float R1_small = 0.4f;  // main radius (smaller torus)
-			constexpr float R2_small = 0.05f; // tube radius (smaller torus)
-
-			constexpr uint32_t U_STEPS = 50;
-			constexpr uint32_t V_STEPS = 40;
-
-			constexpr float V_REPEATS = 1.0f;
-			float U_REPEATS = std::ceil(V_REPEATS / R2_small * R1_small);
-
-			float rotation_angle = 0.0f; // Initial rotation angle around the x-axis
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi, float r1, float r2, float rotation_angle)
-			{
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.0f * float(M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * 2.0f * float(M_PI);
-
-				// Torus position before any transformation
-				float x = (r1 + r2 * std::cos(va)) * std::cos(ua);
-				float y = (r1 + r2 * std::cos(va)) * std::sin(ua);
-				float z = r2 * std::sin(va);
-
-				// Apply rotation around the x-axis for the smaller torus
-				float new_y = y * std::cos(rotation_angle) - z * std::sin(rotation_angle);
-				float new_z = y * std::sin(rotation_angle) + z * std::cos(rotation_angle);
-				y = new_y;
-				z = new_z;
-
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = x, .y = y, .z = z},
-					.Normal{
-						.x = std::cos(va) * std::cos(ua),
-						.y = std::cos(va) * std::sin(ua),
-						.z = std::sin(va),
-					},
-					.TexCoord{
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			// Generate the smaller torus vertices with rotation
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui)
-			{
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi)
-				{
-					emplace_vertex(ui, vi, R1_small, R2_small, rotation_angle); // For smaller torus
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-
-					emplace_vertex(ui, vi + 1, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi, R1_small, R2_small, rotation_angle);
-					emplace_vertex(ui + 1, vi + 1, R1_small, R2_small, rotation_angle);
-				}
-			}
-
-			torus_vertices_3.count = uint32_t(vertices.size()) - torus_vertices_3.first;
-		}
-
-		{ // Add a rotating triangular prism inside the smaller torus
-			tetrahedron.first = uint32_t(vertices.size());
-			constexpr float tetrahedron_size = 0.2f;							  // The size/scale of the tetrahedron
-			float rotation_angle_tetrahedron = time / 60.0f * 2.0f * float(M_PI); // Time-based rotation for animation
-
-			// Define a 3D point structure
-			struct Vec3
-			{
-				float x, y, z;
-			};
-
-			// Vertices of a regular tetrahedron
-			std::array<Vec3, 4> vertices_tetrahedron = {
-				// These are normalized coordinates for a regular tetrahedron centered at the origin
-				Vec3{tetrahedron_size * 1.0f, tetrahedron_size * 1.0f, tetrahedron_size * 1.0f},
-				Vec3{tetrahedron_size * -1.0f, tetrahedron_size * -1.0f, tetrahedron_size * 1.0f},
-				Vec3{tetrahedron_size * -1.0f, tetrahedron_size * 1.0f, tetrahedron_size * -1.0f},
-				Vec3{tetrahedron_size * 1.0f, tetrahedron_size * -1.0f, tetrahedron_size * -1.0f}};
-
-			// Function to rotate a point around the Z-axis
-			auto rotate_vertex_around_z = [&](Vec3 vertex, float angle)
-			{
-				float new_x = vertex.x * std::cos(angle) - vertex.y * std::sin(angle);
-				float new_y = vertex.x * std::sin(angle) + vertex.y * std::cos(angle);
-				return Vec3{new_x, new_y, vertex.z};
-			};
-
-			// Add tetrahedron faces (each face is a triangle) using PosNorTexVertex format
-			// Define the faces of the tetrahedron (4 triangles)
-			std::array<std::array<int, 3>, 4> faces = {{
-				{0, 1, 2}, // First face
-				{0, 1, 3}, // Second face
-				{0, 2, 3}, // Third face
-				{1, 2, 3}  // Fourth face
-			}};
-
-			// Add the faces of the tetrahedron
-			for (const auto &face : faces)
-			{
-				// Rotate each vertex in the face
-				Vec3 rotated_vertex_1 = rotate_vertex_around_z(vertices_tetrahedron[face[0]], rotation_angle_tetrahedron);
-				Vec3 rotated_vertex_2 = rotate_vertex_around_z(vertices_tetrahedron[face[1]], rotation_angle_tetrahedron);
-				Vec3 rotated_vertex_3 = rotate_vertex_around_z(vertices_tetrahedron[face[2]], rotation_angle_tetrahedron);
-
-				// Compute normal for this triangle (cross product of two edges)
-				Vec3 edge1{rotated_vertex_2.x - rotated_vertex_1.x, rotated_vertex_2.y - rotated_vertex_1.y, rotated_vertex_2.z - rotated_vertex_1.z};
-				Vec3 edge2{rotated_vertex_3.x - rotated_vertex_1.x, rotated_vertex_3.y - rotated_vertex_1.y, rotated_vertex_3.z - rotated_vertex_1.z};
-				Vec3 normal{
-					edge1.y * edge2.z - edge1.z * edge2.y,
-					edge1.z * edge2.x - edge1.x * edge2.z,
-					edge1.x * edge2.y - edge1.y * edge2.x};
-
-				// Add the three vertices for the triangle face with computed normal
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = rotated_vertex_1.x, .y = rotated_vertex_1.y, .z = rotated_vertex_1.z},
-					.Normal{.x = normal.x, .y = normal.y, .z = normal.z},
-					.TexCoord{.s = 0.0f, .t = 0.0f}});
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = rotated_vertex_2.x, .y = rotated_vertex_2.y, .z = rotated_vertex_2.z},
-					.Normal{.x = normal.x, .y = normal.y, .z = normal.z},
-					.TexCoord{.s = 0.0f, .t = 0.0f}});
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{.x = rotated_vertex_3.x, .y = rotated_vertex_3.y, .z = rotated_vertex_3.z},
-					.Normal{.x = normal.x, .y = normal.y, .z = normal.z},
-					.TexCoord{.s = 0.0f, .t = 0.0f}});
-			}
-			tetrahedron.count = uint32_t(vertices.size()) - tetrahedron.first;
-		}
-
 		size_t bytes = vertices.size() * sizeof(vertices[0]);
 
 		object_vertices = rtg.helpers.create_buffer(
@@ -619,7 +392,26 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			Helpers::Unmapped);
 
 		// copy data to buffer:
-		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
+		// rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
+	}
+
+	{
+		// TODO: create scene object vertices
+		std::vector<SceneVertex> vertices;
+
+		load_vertex_from_b72(vertices);
+
+		size_t bytes = vertices.size() * sizeof(vertices[0]);
+
+		scene_vertices = rtg.helpers.create_buffer(
+			bytes,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped);
+
+		std::cout << "\nSSize: " << bytes << ", " << vertices.size() << " * " << sizeof(vertices[0]) << "\n\n";
+		// copy data to buffer:
+		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, scene_vertices);
 	}
 
 	{ // make some textures
@@ -729,194 +521,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 		textures.emplace_back(rtg.helpers.create_image(
 			VkExtent2D{.width = size, .height = size}, // size of image
 			VK_FORMAT_R8G8B8A8_SRGB,				   // 8-bit RGBA with SRGB encoding
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
-			Helpers::Unmapped));
-
-		// transfer the generated data to the GPU:
-		rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-	}
-
-	{ // texture 3 will be a metallic gold texture:
-		// set the size of the texture:
-		uint32_t size = 256;
-		std::vector<uint32_t> data;
-		data.reserve(size * size);
-
-		// iterate over each pixel:
-		for (uint32_t y = 0; y < size; ++y)
-		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				// Create a gold color by adjusting the r, g, b channels
-				// Introduce some shininess by modulating the colors based on x and y
-				uint8_t base_r = 200 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 30.0f); // base red for golden color
-				uint8_t base_g = 160 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 30.0f); // base green
-				uint8_t base_b = 50 + uint8_t((std::cos(x * 0.1f) + std::cos(y * 0.1f)) * 20.0f);  // base blue, lower to keep it yellowish
-
-				// Apply metallic shininess by adding highlights:
-				float shine = std::abs(std::sin(x * 0.05f + y * 0.05f)) * 80.0f;
-
-				// Combine the base color with the shininess:
-				uint8_t r = uint8_t(std::min(255.0f, base_r + shine));
-				uint8_t g = uint8_t(std::min(255.0f, base_g + shine));
-				uint8_t b = uint8_t(std::min(255.0f, base_b + shine));
-				uint8_t a = 0xff; // fully opaque
-
-				// Combine r, g, b, a into a single 32-bit value:
-				data.emplace_back(uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24));
-			}
-		}
-
-		assert(data.size() == size * size);
-
-		// create the image on the GPU:
-		textures.emplace_back(rtg.helpers.create_image(
-			VkExtent2D{.width = size, .height = size}, // size of image
-			VK_FORMAT_R8G8B8A8_SRGB,				   // 8-bit RGBA with SRGB encoding
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
-			Helpers::Unmapped));
-
-		// transfer the generated data to the GPU:
-		rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-	}
-
-	{ // texture 4 will be a metallic silver texture:
-		// set the size of the texture:
-		uint32_t size = 256;
-		std::vector<uint32_t> data;
-		data.reserve(size * size);
-
-		// iterate over each pixel:
-		for (uint32_t y = 0; y < size; ++y)
-		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				// Create a silver color by adjusting the r, g, b channels
-				// Introduce some shininess by modulating the colors based on x and y
-				uint8_t base_r = 180 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 40.0f); // base red for silver color
-				uint8_t base_g = 180 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 40.0f); // base green for silver
-				uint8_t base_b = 180 + uint8_t((std::cos(x * 0.1f) + std::cos(y * 0.1f)) * 40.0f); // base blue for silver
-
-				// Apply metallic shininess by adding highlights:
-				float shine = std::abs(std::sin(x * 0.05f + y * 0.05f)) * 90.0f;
-
-				// Combine the base color with the shininess:
-				uint8_t r = uint8_t(std::min(255.0f, base_r + shine));
-				uint8_t g = uint8_t(std::min(255.0f, base_g + shine));
-				uint8_t b = uint8_t(std::min(255.0f, base_b + shine));
-				uint8_t a = 0xff; // fully opaque
-
-				// Combine r, g, b, a into a single 32-bit value:
-				data.emplace_back(uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24));
-			}
-		}
-
-		assert(data.size() == size * size);
-
-		// create the image on the GPU:
-		textures.emplace_back(rtg.helpers.create_image(
-			VkExtent2D{.width = size, .height = size}, // size of image
-			VK_FORMAT_R8G8B8A8_SRGB,				   // 8-bit RGBA with SRGB encoding
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
-			Helpers::Unmapped));
-
-		// transfer the generated data to the GPU:
-		rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-	}
-
-	{ // texture 5 will be a glass-like texture:
-		// set the size of the texture:
-		uint32_t size = 256;
-		std::vector<uint32_t> data;
-		data.reserve(size * size);
-
-		// iterate over each pixel:
-		for (uint32_t y = 0; y < size; ++y)
-		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				// Create a glass-like color by adjusting the r, g, b channels
-				// Use light blue/green tints to simulate slight coloring of glass
-				uint8_t base_r = 180 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 20.0f); // faint red tint
-				uint8_t base_g = 200 + uint8_t((std::sin(x * 0.1f) + std::cos(y * 0.1f)) * 30.0f); // greenish tint
-				uint8_t base_b = 220 + uint8_t((std::cos(x * 0.1f) + std::cos(y * 0.1f)) * 40.0f); // bluish tint
-
-				// Apply shininess to simulate reflective glass surface:
-				float shine = std::abs(std::sin(x * 0.05f + y * 0.05f)) * 60.0f;
-
-				// Combine the base color with the shininess:
-				uint8_t r = uint8_t(std::min(255.0f, base_r + shine));
-				uint8_t g = uint8_t(std::min(255.0f, base_g + shine));
-				uint8_t b = uint8_t(std::min(255.0f, base_b + shine));
-
-				// Adjust alpha for transparency:
-				uint8_t a = 128 + uint8_t((std::sin(x * 0.1f) + std::cos(y * 0.1f)) * 40.0f); // semi-transparent glass effect
-
-				// Combine r, g, b, a into a single 32-bit value:
-				data.emplace_back(uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24));
-			}
-		}
-
-		assert(data.size() == size * size);
-
-		// create the image on the GPU:
-		textures.emplace_back(rtg.helpers.create_image(
-			VkExtent2D{.width = size, .height = size}, // size of image
-			VK_FORMAT_R8G8B8A8_UNORM,				   // 8-bit RGBA without SRGB encoding
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
-			Helpers::Unmapped));
-
-		// transfer the generated data to the GPU:
-		rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-	}
-
-	{ // texture 6 will be a ruby-like texture:
-		// set the size of the texture:
-		uint32_t size = 256;
-		std::vector<uint32_t> data;
-		data.reserve(size * size);
-
-		// iterate over each pixel:
-		for (uint32_t y = 0; y < size; ++y)
-		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				// Create a ruby-like color by adjusting the r, g, b channels
-				// Use deep red with slight variations for ruby appearance
-				uint8_t base_r = 200 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 40.0f); // strong red base color
-				uint8_t base_g = 30 + uint8_t((std::sin(x * 0.1f) + std::cos(y * 0.1f)) * 20.0f);  // slight greenish tint
-				uint8_t base_b = 30 + uint8_t((std::cos(x * 0.1f) + std::cos(y * 0.1f)) * 10.0f);  // slight bluish tint
-
-				// Apply shininess to simulate the reflective ruby surface:
-				float shine = std::abs(std::sin(x * 0.05f + y * 0.05f)) * 50.0f;
-
-				// Combine the base color with the shininess:
-				uint8_t r = uint8_t(std::min(255.0f, base_r + shine));
-				uint8_t g = uint8_t(std::min(255.0f, base_g + shine));
-				uint8_t b = uint8_t(std::min(255.0f, base_b + shine));
-
-				// Adjust alpha for transparency to create a crystal-like effect:
-				uint8_t a = 100 + uint8_t((std::sin(x * 0.1f) + std::cos(y * 0.1f)) * 60.0f); // semi-transparent ruby effect
-
-				// Combine r, g, b, a into a single 32-bit value:
-				data.emplace_back(uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24));
-			}
-		}
-
-		assert(data.size() == size * size);
-
-		// create the image on the GPU:
-		textures.emplace_back(rtg.helpers.create_image(
-			VkExtent2D{.width = size, .height = size}, // size of image
-			VK_FORMAT_R8G8B8A8_UNORM,				   // 8-bit RGBA without SRGB encoding
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
@@ -1080,15 +684,17 @@ Tutorial::~Tutorial()
 	textures.clear();
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
+	rtg.helpers.destroy_buffer(std::move(scene_vertices));
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE)
 	{
 		destroy_framebuffers();
 	}
 
-	background_pipeline.destroy(rtg);
+	// background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
+	scenes_pipeline.destroy(rtg);
 
 	for (Workspace &workspace : workspaces)
 	{
@@ -1134,6 +740,24 @@ Tutorial::~Tutorial()
 		if (workspace.Transforms.handle != VK_NULL_HANDLE)
 		{
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+		}
+
+		if (workspace.Scene_world_src.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_world_src));
+		}
+		if (workspace.Scene_world.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_world));
+		}
+
+		if (workspace.Scene_transforms_src.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_transforms_src));
+		}
+		if (workspace.Scene_transforms.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_transforms));
 		}
 		// Transforms_descriptors freed when pool is destroyed.
 	}
@@ -1351,6 +975,22 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.World_src.handle, workspace.World.handle, 1, &copy_region);
 	}
 
+	{ // upload scene world info:
+		assert(workspace.Scene_world_src.size == sizeof(world));
+
+		// host-side copy into World_src:
+		memcpy(workspace.Scene_world_src.allocation.data(), &world, sizeof(world));
+
+		// add device-side copy from World_src -> World:
+		assert(workspace.Scene_world_src.size == workspace.Scene_world.size);
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.Scene_world_src.size,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_world_src.handle, workspace.Scene_world.handle, 1, &copy_region);
+	}
+
 	if (!object_instances.empty())
 	{ // upload object transforms:
 		//[re-]allocate lines buffers if needed:
@@ -1432,6 +1072,87 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
 
+	if (!scene_instances.empty())
+	{ // upload scene transforms:
+		//[re-]allocate lines buffers if needed:
+		size_t needed_bytes = scene_instances.size() * sizeof(ScenesPipeline::Transform);
+		if (workspace.Scene_transforms_src.handle == VK_NULL_HANDLE || workspace.Scene_transforms_src.size < needed_bytes)
+		{
+			// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+
+			if (workspace.Scene_transforms_src.handle)
+			{
+				rtg.helpers.destroy_buffer(std::move(workspace.Scene_transforms_src));
+			}
+			if (workspace.Scene_transforms.handle)
+			{
+				rtg.helpers.destroy_buffer(std::move(workspace.Scene_transforms));
+			}
+
+			workspace.Scene_transforms_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+				Helpers::Mapped																// get a pointer to the memory
+			);
+			workspace.Scene_transforms = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
+				Helpers::Unmapped													   // don't get a pointer to the memory
+			);
+
+			// update the descriptor set:
+			VkDescriptorBufferInfo Transforms_info{
+				.buffer = workspace.Scene_transforms.handle,
+				.offset = 0,
+				.range = workspace.Scene_transforms.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 1> writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Scene_transforms_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Transforms_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
+				0, nullptr								// descriptorCopies count, data
+			);
+
+			std::cout << "Re-allocated scene transforms buffers to " << new_bytes << " bytes." << std::endl;
+		}
+
+		assert(workspace.Scene_transforms_src.size == workspace.Scene_transforms.size);
+		assert(workspace.Scene_transforms_src.size >= needed_bytes);
+
+		{ // copy transforms into Transforms_src:
+			assert(workspace.Scene_transforms_src.allocation.mapped);
+			ScenesPipeline::Transform *out = reinterpret_cast<ScenesPipeline::Transform *>(workspace.Scene_transforms_src.allocation.data()); // Strict aliasing violation, but it doesn't matter
+			for (ScenesObjectInstance const &inst : scene_instances)
+			{
+				*out = inst.transform;
+				++out;
+			}
+		}
+
+		// device-side copy from lines_vertices_src -> lines_vertices:
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_transforms_src.handle, workspace.Scene_transforms.handle, 1, &copy_region);
+	}
+
 	{ // memory barrier to make sure copies complete before rendering happens:
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -1452,7 +1173,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 	// put GPU commands here!
 	{ // render pass
 		std::array<VkClearValue, 2> clear_values{
-			VkClearValue{.color{.float32{0.851f, 0.902f, 0.3137f, 1.0f}}},
+			VkClearValue{.color{.float32{0.f, 0.f, 0.f, 1.0f}}},
 			VkClearValue{.depthStencil{.depth = 1.0f, .stencil = 0}},
 		};
 
@@ -1492,49 +1213,51 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
 		}
 
-		{
-			// draw with the background pipeline:
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);
+		// {
+		// 	// draw with the background pipeline:
+		// 	vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);
 
-			{ // push time:
-				BackgroundPipeline::Push push{
-					.time = float(time),
-				};
-				vkCmdPushConstants(workspace.command_buffer, background_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-			}
+		// 	{ // push time:
+		// 		BackgroundPipeline::Push push{
+		// 			.time = float(time),
+		// 		};
+		// 		vkCmdPushConstants(workspace.command_buffer, background_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+		// 	}
 
-			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
-		}
+		// 	vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
+		// }
 
-		{ // draw with the lines pipeline:
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
+		// { // draw with the lines pipeline:
+		// 	vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
 
-			{ // use lines_vertices (offset 0) as vertex buffer binding 0:
-				std::array<VkBuffer, 1> vertex_buffers{workspace.lines_vertices.handle};
-				std::array<VkDeviceSize, 1> offsets{0};
-				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
-			}
+		// 	{ // use lines_vertices (offset 0) as vertex buffer binding 0:
+		// 		std::array<VkBuffer, 1> vertex_buffers{workspace.lines_vertices.handle};
+		// 		std::array<VkDeviceSize, 1> offsets{0};
+		// 		vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+		// 	}
 
-			{ // bind Camera descriptor set:
-				std::array<VkDescriptorSet, 1> descriptor_sets{
-					workspace.Camera_descriptors, // 0: Camera
-				};
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,								  // command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,						  // pipeline bind point
-					lines_pipeline.layout,									  // pipeline layout
-					0,														  // first set
-					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
-					0, nullptr												  // dynamic offsets count, ptr
-				);
-			}
+		// 	{ // bind Camera descriptor set:
+		// 		std::array<VkDescriptorSet, 1> descriptor_sets{
+		// 			workspace.Camera_descriptors, // 0: Camera
+		// 		};
+		// 		vkCmdBindDescriptorSets(
+		// 			workspace.command_buffer,								  // command buffer
+		// 			VK_PIPELINE_BIND_POINT_GRAPHICS,						  // pipeline bind point
+		// 			lines_pipeline.layout,									  // pipeline layout
+		// 			0,														  // first set
+		// 			uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+		// 			0, nullptr												  // dynamic offsets count, ptr
+		// 		);
+		// 	}
 
-			// draw lines vertices:
-			// vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
-		}
+		// 	// draw lines vertices:
+		// 	vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
+		// }
 
+		// if (0)
 		if (!object_instances.empty())
 		{ // draw with the objects pipeline:
+			std::cout << "object_instances.size(): " << object_instances.size() << "\n";
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
 			{ // use object_vertices (offset 0) as vertex buffer binding 0:
@@ -1577,9 +1300,57 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 			}
+		}
 
-			// draw torus vertices:
-			// vkCmdDraw(workspace.command_buffer, 2 * torus_vertices.count, 2, torus_vertices.first, 0);
+		// if (0)
+		if (!scene_instances.empty())
+		{ // draw with the scene pipeline:
+			// std::cout << "scene_instances #: " << scene_instances.size() << "\n";
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, scenes_pipeline.handle);
+
+			{ // use object_vertices (offset 0) as vertex buffer binding 0:
+				std::array<VkBuffer, 1> vertex_buffers{scene_vertices.handle};
+				std::array<VkDeviceSize, 1> offsets{0};
+				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+			}
+
+			{ // bind World and Transforms descriptor sets:
+				std::array<VkDescriptorSet, 2> descriptor_sets{
+					workspace.Scene_world_descriptors,		// 0: World
+					workspace.Scene_transforms_descriptors, // 1: Transforms
+				};
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,								  // command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,						  // pipeline bind point
+					scenes_pipeline.layout,									  // pipeline layout
+					0,														  // first set
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+					0, nullptr												  // dynamic offsets count, ptr
+				);
+			}
+
+			// Camera descriptor set is still bound, but unused(!)
+
+			// draw all instances:
+			for (ScenesObjectInstance const &inst : scene_instances)
+			{
+				uint32_t index = uint32_t(&inst - &scene_instances[0]);
+
+				// no texture at present stage
+
+				// bind texture descriptor set:
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,			   // command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
+					scenes_pipeline.layout,				   // pipeline layout
+					2,									   // second set
+					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
+					0, nullptr							   // dynamic offsets count, ptr
+				);
+				// std::cout << "ObjectInstance index: " << index << ", vertices count: " << inst.vertices.count << "\n";
+				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+			}
 		}
 
 		vkCmdEndRenderPass(workspace.command_buffer);
@@ -1625,21 +1396,25 @@ void Tutorial::update(float dt)
 							  1000.0f														   // far
 							  ) *
 						  look_at(
-							  3.0f * std::cos(ang), 3.0f * std::sin(ang), -1.f * std::cos(ang), // eye
-							  // 3.0f, 3.0f, 1.0f,
-							  0.0f, 0.2f, 0.5f * std::sin(ang), // target
-							  0.f, .5f, 0.5f					// up
+							  // 3.0f * std::cos(ang), 3.0f * std::sin(ang), -1.f * std::cos(ang), // eye
+							  3.0f, 3.0f, 1.0f,
+							  // 0.0f, 0.2f, 0.5f * std::sin(ang), // target
+							  0.0f, 0.2f, 0.5f,
+							  0.f, .5f, 0.5f // up
 						  );
 	}
 
 	{
 		// Define time-based variable for smooth transitions
-		float t = std::fmod(time, 60.0f) / 20.0f;
+		// float t = std::fmod(time, 60.0f) / 20.0f;
 
 		// Use time to create rainbow-like colors (HSV to RGB conversion could also be used)
-		float red = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 0.0f);   // Red
-		float green = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 2.0f); // Green
-		float blue = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 4.0f);  // Blue
+		// float red = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 0.0f);   // Red
+		// float green = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 2.0f); // Green
+		// float blue = 0.5f + 0.5f * std::sin(t * 2.0f * 3.14f + 4.0f);  // Blue
+		float red = 1.f;   // Red
+		float green = 1.f; // Green
+		float blue = 1.f;  // Blue
 
 		// Static sky direction (for now, you can rotate or move it to simulate dynamic weather)
 		world.SKY_DIRECTION.x = 0.0f;
@@ -1652,7 +1427,7 @@ void Tutorial::update(float dt)
 		world.SKY_ENERGY.b = blue;	// Blue channel
 
 		// Optionally adjust intensity or distribution across the sky:
-		float intensity = 0.2f + 0.8f * std::sin(t * 3.14f); // Flicker intensity like sunlight through clouds
+		float intensity = 1.f; // Flicker intensity like sunlight through clouds
 
 		// Modify sun light to be less dominant and emphasize rainbow light
 		world.SUN_DIRECTION.x = 6.0f / 23.0f;
@@ -1773,36 +1548,6 @@ void Tutorial::update(float dt)
 	{ // make some objects:
 		object_instances.clear();
 
-		{ // plane translated +x by one unit:
-			mat4 WORLD_FROM_LOCAL{
-				1.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				1.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				1.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				1.0f,
-			};
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = plane_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-			});
-		}
-
 		{ // torus translated -x by one unit and rotated CCW around +y:
 			float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
 			float ca = std::cos(ang);
@@ -1829,17 +1574,6 @@ void Tutorial::update(float dt)
 			float angle_x = time / 60.0f * 2.0f * float(M_PI) * 10.0f; // Adjust time to control the speed of rotation
 			float cx = std::cos(angle_x);
 			float sx = std::sin(angle_x);
-			float cx_1 = std::cos(3.f * angle_x);
-			float sx_1 = std::sin(3.f * angle_x);
-
-			// Create rotation matrix for the y-axis
-			float angle_y = time / 60.0f * 2.0f * float(M_PI) * 18.0f; // Adjust time for rotation speed
-			float cy = std::cos(angle_y);
-			float sy = std::sin(angle_y);
-			// Create rotation matrix for the z-axis
-			float angle_z = time / 60.0f * 2.0f * float(M_PI) * 25.0f; // Adjust time for rotation speed
-			float cz = std::cos(angle_z);
-			float sz = std::sin(angle_z);
 
 			mat4 ROTATE_X{
 				1.0f, 0.0f, 0.0f, 0.0f,
@@ -1847,83 +1581,165 @@ void Tutorial::update(float dt)
 				0.0f, sx, cx, 0.0f,
 				0.0f, 0.0f, 0.0f, 1.0f};
 
-			mat4 ROTATE_X_1{
+			// Combine the rotations (apply in the desired order)
+			mat4 WORLD_FROM_LOCAL_0 = ROTATE_X * WORLD_FROM_LOCAL; // Rotation about X-axis
+
+			// object_instances.emplace_back(ObjectInstance{
+			// 	.vertices = torus_vertices,
+			// 	.transform{
+			// 		.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_0,
+			// 		.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_0,
+			// 		.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_0,
+			// 	},
+			// 	.texture = 2,
+			// });
+		}
+	}
+
+	{ // make scene objects:
+		scene_instances.clear();
+		{
+			mat4 WORLD_FROM_LOCAL{
 				1.0f, 0.0f, 0.0f, 0.0f,
-				0.0f, cx_1, -sx_1, 0.0f,
-				0.0f, sx_1, cx_1, 0.0f,
-				0.0f, 0.0f, 0.0f, 1.0f};
-
-			mat4 ROTATE_Y{
-				cy, 0.0f, sy, 0.0f,
 				0.0f, 1.0f, 0.0f, 0.0f,
-				-sy, 0.0f, cy, 0.0f,
-				0.0f, 0.0f, 0.0f, 1.0f};
-
-			mat4 ROTATE_Z{
-				cz, -sz, 0.0f, 0.0f,
-				sz, cz, 0.0f, 0.0f,
 				0.0f, 0.0f, 1.0f, 0.0f,
 				0.0f, 0.0f, 0.0f, 1.0f};
 
-			// Combine the rotations (apply in the desired order)
-			mat4 WORLD_FROM_LOCAL_0 = ROTATE_X * WORLD_FROM_LOCAL;	 // Rotation about X-axis
-			mat4 WORLD_FROM_LOCAL_1 = ROTATE_Y * WORLD_FROM_LOCAL;	 // Rotation about Y-axis
-			mat4 WORLD_FROM_LOCAL_2 = ROTATE_Z * WORLD_FROM_LOCAL;	 // Rotation about Z-axis
-			mat4 WORLD_FROM_LOCAL_3 = ROTATE_X_1 * WORLD_FROM_LOCAL; // Rotation about X-axis
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_0,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_0,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_0,
-				},
-				.texture = 2,
-			});
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices_1,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_1,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_1,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_1,
-				},
-				.texture = 4,
-			});
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices_2,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_2,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_2,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_2,
-				},
-				.texture = 3,
-			});
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices_3,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_3,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_3,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_3,
-				},
-				.texture = 5,
-			});
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = tetrahedron,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_1,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_1,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_1,
-				},
-				.texture = 6,
-			});
+			for (const auto &obj_vertices : scene_object_vertices)
+			{
+				scene_instances.emplace_back(ScenesObjectInstance{
+					.vertices = obj_vertices,
+					.transform{
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL, // Assuming normal matrix is the same for simplicity
+						.WORLD_FROM_LOCAL_TANGENT = WORLD_FROM_LOCAL,
+					},
+					.texture = 0, // Assign the appropriate texture ID if needed
+				});
+			}
 		}
 	}
 }
 
 void Tutorial::on_input(InputEvent const &)
 {
+}
+
+void Tutorial::load_s72()
+{
+	std::cout << std::filesystem::current_path() << "  load s72 file: ";
+	const std::string s72_file = "./resource/" + rtg.configuration.scene_name;
+	std::cout << s72_file;
+	sejp::value val = sejp::load(s72_file);
+	scene_workflow(val);
+	// std::map<std::string, sejp::value> const &object = val.as_object().value();
+}
+
+void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
+{
+	if (!node || !node->mesh_)
+		return;
+
+	const Mesh *mesh = node->mesh_;
+
+	// Get the source file from the POSITION attribute
+	const std::string b72_file_path = "./resource/" + mesh->attributes.at("POSITION").src;
+
+	const uint32_t stride = mesh->attributes.at("POSITION").stride;
+
+	// Open the .b72 file
+	std::ifstream file(b72_file_path, std::ios::binary);
+	if (!file.is_open())
+	{
+		std::cerr << "Failed to open file: " << b72_file_path << std::endl;
+		return;
+	}
+
+	bool has_color = mesh->attributes.find("COLOR") != mesh->attributes.end();
+
+	// Create ObjectVertices for this mesh
+	ObjectVertices obj_vertices;
+	obj_vertices.first = static_cast<uint32_t>(vertices.size());
+
+	// Read each vertex by its stride
+	for (uint32_t i = 0; i < mesh->count; ++i)
+	{
+		SceneVertex vertex;
+
+		// Read a stride worth of data into a buffer
+		std::vector<char> buffer(stride);
+		file.read(buffer.data(), stride);
+
+		// Extract Position
+		const auto &pos_attr = mesh->attributes.at("POSITION");
+		std::memcpy(&vertex.Position, buffer.data() + pos_attr.offset, sizeof(vertex.Position));
+
+		// Extract Normal
+		const auto &normal_attr = mesh->attributes.at("NORMAL");
+		std::memcpy(&vertex.Normal, buffer.data() + normal_attr.offset, sizeof(vertex.Normal));
+
+		// Extract Tangent
+		const auto &tangent_attr = mesh->attributes.at("TANGENT");
+		std::memcpy(&vertex.Tangent, buffer.data() + tangent_attr.offset, sizeof(vertex.Tangent));
+
+		// Extract TexCoord
+		const auto &texcoord_attr = mesh->attributes.at("TEXCOORD");
+		std::memcpy(&vertex.TexCoord, buffer.data() + texcoord_attr.offset, sizeof(vertex.TexCoord));
+
+		// Extract Color if present
+		if (has_color)
+		{
+			glm::u8vec4 color;
+			const auto &color_attr = mesh->attributes.at("COLOR");
+			std::memcpy(&color, buffer.data() + color_attr.offset, sizeof(color));
+			vertex.color = std::optional<Color>{{color.r, color.g, color.b, color.a}};
+		}
+
+		// Push the vertex into the vertices vector
+		vertices.push_back(vertex);
+	}
+
+	std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
+			  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
+
+	file.close();
+
+	// Set vertex count in object_vertices
+	obj_vertices.count = mesh->count;
+
+	// Push the ObjectVertices to the scene_object_vertices vector
+	scene_object_vertices.push_back(obj_vertices);
+
+	// If you need to create Vulkan buffers here, you can uncomment this:
+	// create_mesh_buffer(vertices, object_vertices);
+}
+
+void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
+{
+	// DFS function to traverse and process vertices for each node
+	std::function<void(Node *)> dfs_process_node = [&](Node *node)
+	{
+		if (!node)
+			return;
+
+		// Process node if it has a mesh
+		process_node(vertices, node);
+
+		// Traverse the children nodes
+		for (const auto &child_variant : node->children)
+		{
+			Node *child_node = find_node_by_name_or_index(child_variant);
+			if (child_node)
+			{
+				dfs_process_node(child_node);
+			}
+		}
+	};
+
+	// Start DFS from each root node in the scene
+	for (const auto &[key, root_node] : s72_scene.roots)
+	{
+		dfs_process_node(root_node);
+	}
 }

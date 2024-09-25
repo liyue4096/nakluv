@@ -27,12 +27,15 @@ custom_flags_and_rules();
 //maek.CPP(...) builds a c++ file:
 // it returns the path to the output object file
 const main_objs = [
+	maek.CPP('Scene.cpp'),
 	maek.CPP('Tutorial.cpp'),
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
+	maek.CPP('SceneVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
 	maek.CPP('main.cpp'),
+	maek.CPP('include/sejp/sejp.cpp'),
 ];
 
 //maek.GLSLC(...) builds a glsl source file:
@@ -58,6 +61,13 @@ const objects_shaders = [
 	maek.GLSLC('./shaders/objects.frag'),
 ];
 main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+
+//to build real_objects_shaders shaders and pipeline:
+const real_objects_shaders = [
+	maek.GLSLC('./shaders/real_objects.vert'),
+	maek.GLSLC('./shaders/real_objects.frag'),
+];
+main_objs.push( maek.CPP('ScenesPipeline.cpp', undefined, { depends:[...real_objects_shaders] } ) );
 
 // const prebuilt_objs = [ ];
 

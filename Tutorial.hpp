@@ -1,8 +1,18 @@
 #pragma once
 #include "PosColVertex.hpp"
 #include "PosNorTexVertex.hpp"
+#include "SceneVertex.hpp"
 #include "mat4.hpp"
 #include "RTG.hpp"
+
+// Forward declarations of the structs
+struct Node;
+struct Mesh;
+struct Camera;
+struct S72_scene;
+
+// Declare the global variable
+extern S72_scene s72_scene;
 
 struct Tutorial : RTG::Application
 {
@@ -24,7 +34,6 @@ struct Tutorial : RTG::Application
 
 	// Pipelines:
 
-	// TODO
 	struct BackgroundPipeline
 	{
 		// no descriptor set layouts
@@ -119,6 +128,61 @@ struct Tutorial : RTG::Application
 		void destroy(RTG &);
 	} objects_pipeline;
 
+	struct ScenesPipeline
+	{
+		// descriptor set layouts:
+		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
+
+		// types for descriptors:
+		struct World
+		{
+			struct
+			{
+				float x, y, z, padding_;
+			} SKY_DIRECTION;
+			struct
+			{
+				float r, g, b, padding_;
+			} SKY_ENERGY;
+			struct
+			{
+				float x, y, z, padding_;
+			} SUN_DIRECTION;
+			struct
+			{
+				float r, g, b, padding_;
+			} SUN_ENERGY;
+		};
+
+		// types for descriptors:
+		// using Camera = LinesPipeline::Camera;
+		struct Transform
+		{
+			mat4 CLIP_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL_NORMAL;
+			mat4 WORLD_FROM_LOCAL_TANGENT;
+		};
+		static_assert(sizeof(Transform) == 16 * 4 + 16 * 4 + 16 * 4 + 16 * 4, "Transform is the expected size.");
+
+		// push constants
+		struct Push
+		{
+			int use_out_color;
+		};
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = SceneVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} scenes_pipeline;
+
 	// pools from which per-workspace things are allocated:
 	VkCommandPool command_pool = VK_NULL_HANDLE;
 
@@ -147,29 +211,51 @@ struct Tutorial : RTG::Application
 		Helpers::AllocatedBuffer Transforms_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Transforms;	 // device-local
 		VkDescriptorSet Transforms_descriptors;	 // references Transforms
+
+		// // location for ScenesPipeline::Camera data: (streamed to GPU per-frame)
+		// Helpers::AllocatedBuffer Scene_camera_src; // host coherent; mapped
+		// Helpers::AllocatedBuffer Scene_camera;	   // device-local
+		// VkDescriptorSet Scene_camera_descriptors;  // references Camera
+
+		// location for ObjectsPipeline::World data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Scene_world_src; // host coherent; mapped
+		Helpers::AllocatedBuffer Scene_world;	  // device-local
+		VkDescriptorSet Scene_world_descriptors;  // references World
+
+		// location for ObjectsPipeline::Transforms data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Scene_transforms_src; // host coherent; mapped
+		Helpers::AllocatedBuffer Scene_transforms;	   // device-local
+		VkDescriptorSet Scene_transforms_descriptors;  // references Transforms
 	};
 	std::vector<Workspace> workspaces;
 
 	//-------------------------------------------------------------------
 	// static scene resources:
 	Helpers::AllocatedBuffer object_vertices;
+
+	Helpers::AllocatedBuffer scene_vertices;
+
 	struct ObjectVertices
 	{
 		uint32_t first = 0;
 		uint32_t count = 0;
 	};
+
 	ObjectVertices plane_vertices;
 	ObjectVertices torus_vertices;
-	ObjectVertices torus_vertices_1;
-	ObjectVertices torus_vertices_2;
-	ObjectVertices torus_vertices_3;
-	ObjectVertices tetrahedron;
+
+	std::vector<ObjectVertices> scene_object_vertices;
+	std::vector<mat4> scene_world_from_local; // one scene object to one mat4
 
 	std::vector<Helpers::AllocatedImage> textures;
 	std::vector<VkImageView> texture_views;
 	VkSampler texture_sampler = VK_NULL_HANDLE;
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
 	std::vector<VkDescriptorSet> texture_descriptors; // allocated from texture_descriptor_pool
+
+	void load_s72();
+	void process_node(std::vector<SceneVertex> &vertices, Node *node);
+	void load_vertex_from_b72(std::vector<SceneVertex> &vertices);
 	//--------------------------------------------------------------------
 	//  Resources that change when the swapchain is resized:
 
@@ -202,6 +288,14 @@ struct Tutorial : RTG::Application
 		uint32_t texture = 0;
 	};
 	std::vector<ObjectInstance> object_instances;
+
+	struct ScenesObjectInstance
+	{
+		ObjectVertices vertices;
+		ScenesPipeline::Transform transform;
+		uint32_t texture = 0;
+	};
+	std::vector<ScenesObjectInstance> scene_instances;
 
 	//--------------------------------------------------------------------
 	// Rendering function, uses all the resources above to queue work to draw a frame:

@@ -72,7 +72,10 @@
         "map": "cpp",
         "span": "cpp",
         "cstdarg": "cpp",
-        "fstream": "cpp"
+        "fstream": "cpp",
+        "variant": "cpp",
+        "codecvt": "cpp",
+        "filesystem": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

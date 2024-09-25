@@ -35,6 +35,7 @@ void RTG::Configuration::parse(int argc, char **argv)
 				throw std::runtime_error("--scene requires a parameter (a scene file name).");
 			argi += 1;
 			scene_name = argv[argi];
+			// std::cout << scene_name << std::endl;
 		}
 		else if (arg == "--physical-device")
 		{
