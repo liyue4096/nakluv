@@ -75,9 +75,12 @@ void get_scene(const std::vector<sejp::value> &array)
                     const auto &translation_array = translation_opt->second.as_array().value();
                     if (translation_array.size() == 3)
                     {
-                        node.Translation.tx = (float)translation_array[0].as_number().value_or(0.f);
-                        node.Translation.ty = (float)translation_array[1].as_number().value_or(0.f);
-                        node.Translation.tz = (float)translation_array[2].as_number().value_or(0.f);
+                        // node.Translation.tx = (float)translation_array[0].as_number().value_or(0.f);
+                        // node.Translation.ty = (float)translation_array[1].as_number().value_or(0.f);
+                        // node.Translation.tz = (float)translation_array[2].as_number().value_or(0.f);
+                        node.position = glm::vec3((float)translation_array[0].as_number().value_or(0.f),
+                                                  (float)translation_array[1].as_number().value_or(0.f),
+                                                  (float)translation_array[2].as_number().value_or(0.f));
                     }
                 }
 
@@ -87,10 +90,14 @@ void get_scene(const std::vector<sejp::value> &array)
                     const auto &rotation_array = rotation_opt->second.as_array().value();
                     if (rotation_array.size() == 4)
                     {
-                        node.Rotation.rx = (float)rotation_array[0].as_number().value_or(0.f);
-                        node.Rotation.ry = (float)rotation_array[1].as_number().value_or(0.f);
-                        node.Rotation.rz = (float)rotation_array[2].as_number().value_or(0.f);
-                        node.Rotation.rw = (float)rotation_array[3].as_number().value_or(1.f);
+                        // node.Rotation.rx = (float)rotation_array[0].as_number().value_or(0.f);
+                        // node.Rotation.ry = (float)rotation_array[1].as_number().value_or(0.f);
+                        // node.Rotation.rz = (float)rotation_array[2].as_number().value_or(0.f);
+                        // node.Rotation.rw = (float)rotation_array[3].as_number().value_or(1.f);
+                        node.rotation = glm::quat((float)rotation_array[3].as_number().value_or(1.f),
+                                                  (float)rotation_array[0].as_number().value_or(1.f),
+                                                  (float)rotation_array[1].as_number().value_or(1.f),
+                                                  (float)rotation_array[2].as_number().value_or(1.f));
                     }
                 }
 
@@ -100,9 +107,9 @@ void get_scene(const std::vector<sejp::value> &array)
                     const auto &scale_array = scale_opt->second.as_array().value();
                     if (scale_array.size() == 3)
                     {
-                        node.Scale.sx = (float)scale_array[0].as_number().value_or(1.f);
-                        node.Scale.sy = (float)scale_array[1].as_number().value_or(1.f);
-                        node.Scale.sz = (float)scale_array[2].as_number().value_or(1.f);
+                        node.scale = glm::vec3((float)scale_array[0].as_number().value_or(0.f),
+                                               (float)scale_array[1].as_number().value_or(0.f),
+                                               (float)scale_array[2].as_number().value_or(0.f));
                     }
                 }
 
@@ -345,10 +352,15 @@ Node *find_node_by_name_or_index(const std::variant<std::string, double> &root)
 }
 
 // DFS to build the node tree
-void dfs_build_tree(Node *current_node)
+void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> &current_path)
 {
     if (!current_node)
         return;
+
+    current_node->parent_ = parrent_node;
+
+    // Add the current node to the path
+    current_path.push_back(current_node);
 
     // Bind the mesh if the node has a valid mesh_name
     if (!current_node->mesh_name.empty())
@@ -360,36 +372,59 @@ void dfs_build_tree(Node *current_node)
     if (!current_node->camera_name.empty())
     {
         current_node->camera_ = find_camera_by_name(current_node->camera_name);
+        // std::cout << "Node: " << current_node->name << " has a camera :" << current_node->camera_->name << "\n";
+    }
+
+    // If the current node has a camera, store the path in the cameras_path map
+    if (current_node->camera_ != nullptr)
+    {
+        // Print the path (node names)
+        // std::cout << "Path to camera " << current_node->camera_->name << ": ";
+        // for (const auto &node_in_path : current_path)
+        // {
+        //     std::cout << node_in_path->name << " -> "; // Print each node name followed by an arrow
+        // }
+        // std::cout << "[End]" << std::endl; // Mark the end of the path
+
+        s72_scene.cameras_path[current_node->camera_->name] = current_path;
     }
 
     // Process each child of the current node
     for (const auto &child : current_node->children)
     {
         Node *child_node = find_node_by_name_or_index(child);
+
         if (child_node)
         {
             std::cout << " child: " << child_node->name << "  mesh: " << child_node->mesh_name << " to parent: " << current_node->name << "\n";
             //  Recursively build the tree for the child
             // s72_scene.roots.push_back(child_node); // Store in roots
             s72_scene.roots[child_node->name] = (child_node);
-            dfs_build_tree(child_node); // Continue DFS
+            dfs_build_tree(child_node, current_node, current_path); // Continue DFS
         }
     }
+
+    // Remove the current node from the path after processing all children
+    current_path.pop_back();
 }
 
 void build_node_trees()
 {
     s72_scene.roots.clear();
+    s72_scene.cameras_path.clear();
 
     for (auto &root : s72_scene.scene.roots)
     {
         Node *root_node = find_node_by_name_or_index(root);
+        std::vector<Node *> path;
+
         if (root_node != nullptr)
         {
             // Start DFS from this root node
             // s72_scene.roots.push_back(root_node); // Store root node
             s72_scene.roots[root_node->name] = (root_node);
-            dfs_build_tree(root_node); // Build the tree from this root
+            // std::cout << "\ndfs_build_tree\n";
+            dfs_build_tree(root_node, nullptr, path); // Build the tree from this root
         }
     }
 }
@@ -427,9 +462,9 @@ void scene_workflow(sejp::value &val)
 
             // Print Translation
             std::cout << "  Translation: ["
-                      << node.Translation.tx << ", "
-                      << node.Translation.ty << ", "
-                      << node.Translation.tz << "]" << std::endl;
+                      << node.position.x << ", "
+                      << node.position.y << ", "
+                      << node.position.z << "]" << std::endl;
 
             // Print Children
             if (!node.children.empty())
@@ -459,4 +494,104 @@ void scene_workflow(sejp::value &val)
 
     // step2: build node trees and bind mesh, camera
     build_node_trees();
+}
+
+glm::mat4 generate_transform(const Node *node)
+{
+    // Translation matrix
+    glm::mat4 translation_matrix = glm::translate(glm::mat4(1.0f), node->position);
+
+    // Rotation matrix from quaternion
+    // glm::quat rotation_quat = glm::quat(node->Rotation.rw, node->Rotation.rx, node->Rotation.ry, node->Rotation.rz);
+    glm::mat4 rotation_matrix = glm::mat4_cast(node->rotation);
+
+    // Scale matrix
+    glm::mat4 scale_matrix = glm::scale(glm::mat4(1.0f), node->scale);
+
+    // Combine translation, rotation, and scale to form the final WORLD_FROM_LOCAL matrix
+    glm::mat4 WORLD_FROM_LOCAL = translation_matrix * rotation_matrix * scale_matrix;
+
+    return WORLD_FROM_LOCAL;
+}
+
+glm::mat4x3 Node::make_local_to_parent() const
+{
+    // compute:
+    //    translate   *   rotate    *   scale
+    //  [ 1 0 0 p.x ]   [       0 ]   [ s.x 0 0 0 ]
+    //  [ 0 1 0 p.y ] * [ rot   0 ] * [ 0 s.y 0 0 ]
+    //  [ 0 0 1 p.z ]   [       0 ]   [ 0 0 s.z 0 ]
+    //                  [ 0 0 0 1 ]   [ 0 0   0 1 ]
+    // glm::quat rotation = glm::quat(Rotation.rw, Rotation.rx, Rotation.ry, Rotation.rz);
+    // glm::vec3 position = glm::vec3(Translation.tx, Translation.ty, Translation.tz);
+    // glm::vec3 scale = glm::vec3(Scale.sx, Scale.sy, Scale.sz);
+
+    glm::mat3 rot = glm::mat3_cast(rotation);
+
+    return glm::mat4x3(
+        rot[0] * scale.x, // scaling the columns here means that scale happens before rotation
+        rot[1] * scale.y,
+        rot[2] * scale.z,
+        position);
+}
+
+glm::mat4x3 Node::make_parent_to_local() const
+{
+    // compute:
+    //    1/scale       *    rot^-1   *  translate^-1
+    //  [ 1/s.x 0 0 0 ]   [       0 ]   [ 0 0 0 -p.x ]
+    //  [ 0 1/s.y 0 0 ] * [rot^-1 0 ] * [ 0 0 0 -p.y ]
+    //  [ 0 0 1/s.z 0 ]   [       0 ]   [ 0 0 0 -p.z ]
+    //                    [ 0 0 0 1 ]   [ 0 0 0  1   ]
+    // glm::quat rotation = glm::quat(Rotation.rw, Rotation.rx, Rotation.ry, Rotation.rz);
+    // glm::vec3 position = glm::vec3(Translation.tx, Translation.ty, Translation.tz);
+    // glm::vec3 scale = glm::vec3(Scale.sx, Scale.sy, Scale.sz);
+
+    glm::vec3 inv_scale;
+    // taking some care so that we don't end up with NaN's , just a degenerate matrix, if scale is zero:
+    inv_scale.x = (scale.x == 0.0f ? 0.0f : 1.0f / scale.x);
+    inv_scale.y = (scale.y == 0.0f ? 0.0f : 1.0f / scale.y);
+    inv_scale.z = (scale.z == 0.0f ? 0.0f : 1.0f / scale.z);
+
+    // compute inverse of rotation:
+    glm::mat3 inv_rot = glm::mat3_cast(glm::inverse(rotation));
+
+    // scale the rows of rot:
+    inv_rot[0] *= inv_scale;
+    inv_rot[1] *= inv_scale;
+    inv_rot[2] *= inv_scale;
+
+    return glm::mat4x3(
+        inv_rot[0],
+        inv_rot[1],
+        inv_rot[2],
+        inv_rot * -position);
+}
+
+glm::mat4x3 Node::make_local_to_world() const
+{
+    if (!parent_)
+    {
+        return make_local_to_parent();
+    }
+    else
+    {
+        return parent_->make_local_to_world() * glm::mat4(make_local_to_parent()); // note: glm::mat4(glm::mat4x3) pads with a (0,0,0,1) row
+    }
+}
+glm::mat4x3 Node::make_world_to_local() const
+{
+    if (!parent_)
+    {
+        return make_parent_to_local();
+    }
+    else
+    {
+        return make_parent_to_local() * glm::mat4(parent_->make_world_to_local()); // note: glm::mat4(glm::mat4x3) pads with a (0,0,0,1) row
+    }
+}
+
+glm::mat4 Camera::make_projection() const
+{
+    return glm::perspective(perspective.vfov, perspective.aspect, perspective.near, perspective.far);
 }

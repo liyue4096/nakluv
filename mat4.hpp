@@ -2,9 +2,12 @@
 
 // A *small* matrix math library for 4x4 matrices only.
 
+#include <iostream>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <glm/glm.hpp> // For glm::mat4
+#include <glm/gtc/matrix_transform.hpp>
 
 // NOTE: column-major storage order (like in OpenGL / GLSL):
 using mat4 = std::array<float, 16>;
@@ -107,6 +110,21 @@ inline mat4 perspective(float vfov, float aspect, float near, float far)
     };
 }
 
+inline glm::mat4 mat4_perspective(float vfov, float aspect, float near, float far)
+{
+    const float e = 1.0f / std::tan(vfov / 2.0f); // Vertical field of view
+    const float a = aspect;
+    const float n = near;
+    const float f = far;
+
+    return glm::mat4{
+        // Column-major order
+        e / a, 0.0f, 0.0f, 0.0f,
+        0.0f, -e, 0.0f, 0.0f,
+        0.0f, 0.0f, -0.5f - 0.5f * (f + n) / (f - n), -1.0f,
+        0.0f, 0.0f, -(f * n) / (f - n), 0.0f};
+}
+
 // look at matrix:
 //  makes a camera-space-from-world matrix for a camera at eye looking toward
 //  target with up-vector pointing (as-close-as-possible) along up.
@@ -175,4 +193,16 @@ inline mat4 look_at(
         in_dot_eye,
         1.0f,
     };
+}
+
+inline void printMat4(const glm::mat4 &mat)
+{
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int col = 0; col < 4; ++col)
+        {
+            std::cout << mat[col][row] << " ";
+        }
+        std::cout << std::endl;
+    }
 }

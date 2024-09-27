@@ -4,6 +4,7 @@
 #include "SceneVertex.hpp"
 #include "mat4.hpp"
 #include "RTG.hpp"
+#include "Scene.hpp"
 
 // Forward declarations of the structs
 struct Node;
@@ -301,4 +302,18 @@ struct Tutorial : RTG::Application
 	// Rendering function, uses all the resources above to queue work to draw a frame:
 
 	virtual void render(RTG &, RTG::RenderParams const &) override;
+
+	//--------------------------------------------------------------------
+	struct PlayMode
+	{
+		struct Button
+		{
+			uint8_t downs = 0;
+			uint8_t pressed = 0;
+		} left, right, down, up;
+
+		Camera_Mode camera_mode = SCENE;
+	} playmode;
+
+	virtual void move_camera(float elapsed, Node *node_);
 };

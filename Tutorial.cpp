@@ -7,16 +7,22 @@
 #include "scene.hpp"
 #include "VK.hpp"
 #include <vulkan/vk_enum_string_helper.h>
+#include "GLFW\glfw3.h"
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <chrono>
 
 #include <filesystem>
 
 #include "include/sejp/sejp.hpp"
+
+std::chrono::time_point<std::chrono::high_resolution_clock> start, end;
 
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 {
@@ -644,6 +650,9 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 	}
+
+	start = std::chrono::high_resolution_clock::now();
+	end = std::chrono::high_resolution_clock::now();
 }
 
 Tutorial::~Tutorial()
@@ -866,6 +875,11 @@ void Tutorial::destroy_framebuffers()
 
 void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 {
+	end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = (end - start) * 1000;
+	start = end;
+	// std::cout << "REPORT " << elapsed.count() << " ms" << std::endl;
+
 	// assert that parameters are valid:
 	assert(&rtg == &rtg_);
 	assert(render_params.workspace_index < workspaces.size());
@@ -1388,6 +1402,7 @@ void Tutorial::update(float dt)
 	time = std::fmod(time + dt, 60.0f);
 
 	{ // camera orbiting the origin:
+
 		[[maybe_unused]] float ang = float(M_PI) * 2.0f * 6.0f * (time / 60.0f);
 		CLIP_FROM_WORLD = perspective(
 							  60.0f / float(M_PI) * 180.0f,									   // vfov
@@ -1396,10 +1411,10 @@ void Tutorial::update(float dt)
 							  1000.0f														   // far
 							  ) *
 						  look_at(
-							  // 3.0f * std::cos(ang), 3.0f * std::sin(ang), -1.f * std::cos(ang), // eye
-							  3.0f, 3.0f, 1.0f,
-							  // 0.0f, 0.2f, 0.5f * std::sin(ang), // target
-							  0.0f, 0.2f, 0.5f,
+							  3.0f * std::cos(ang), 3.0f * std::sin(ang), -1.f * std::cos(ang), // eye
+																								// 3.0f, 3.0f, 1.0f,
+							  0.0f, 0.2f, 0.5f * std::sin(ang),									// target
+							  // 0.0f, 0.2f, 0.5f,
 							  0.f, .5f, 0.5f // up
 						  );
 	}
@@ -1427,16 +1442,16 @@ void Tutorial::update(float dt)
 		world.SKY_ENERGY.b = blue;	// Blue channel
 
 		// Optionally adjust intensity or distribution across the sky:
-		float intensity = 1.f; // Flicker intensity like sunlight through clouds
+		float intensity = 0.8f; // Flicker intensity like sunlight through clouds
 
 		// Modify sun light to be less dominant and emphasize rainbow light
 		world.SUN_DIRECTION.x = 6.0f / 23.0f;
 		world.SUN_DIRECTION.y = 13.0f / 23.0f;
 		world.SUN_DIRECTION.z = 18.0f / 23.0f;
 
-		world.SUN_ENERGY.r = intensity * 0.5f;
-		world.SUN_ENERGY.g = intensity * 0.5f;
-		world.SUN_ENERGY.b = intensity * 0.5f;
+		world.SUN_ENERGY.r = intensity * 0.3f;
+		world.SUN_ENERGY.g = intensity * 0.3f;
+		world.SUN_ENERGY.b = intensity * 0.3f;
 	}
 
 	{ // make some crossing lines at different depths:
@@ -1599,31 +1614,222 @@ void Tutorial::update(float dt)
 	{ // make scene objects:
 		scene_instances.clear();
 		{
-			mat4 WORLD_FROM_LOCAL{
-				1.0f, 0.0f, 0.0f, 0.0f,
-				0.0f, 1.0f, 0.0f, 0.0f,
-				0.0f, 0.0f, 1.0f, 0.0f,
-				0.0f, 0.0f, 0.0f, 1.0f};
+			glm::mat4 WORLD_FROM_LOCAL(1.0f);
+			glm::mat4 CLIP_FROM_WORLD_SCENE(1.0f);
+			glm::mat4 WORLD_FROM_LOCAL_debug(1.0f);
+
+			if (!s72_scene.cameras.empty())
+			{
+				if (s72_scene.current_camera_ == nullptr)
+				{
+					s72_scene.current_camera_ = &(s72_scene.cameras[0]);
+				}
+				// TODO: for this camera, calculate the WORLD_FROM_LOCAL from path
+				std::string camera_name = s72_scene.current_camera_->name; // Assuming the first camera
+				if (s72_scene.cameras_path.find(camera_name) != s72_scene.cameras_path.end())
+				{
+					float aspect = s72_scene.current_camera_->perspective.aspect;
+					float vfov = s72_scene.current_camera_->perspective.vfov;
+					float near = s72_scene.current_camera_->perspective.near;
+					float far = s72_scene.current_camera_->perspective.far;
+
+					Node *node_ = s72_scene.roots[camera_name];
+
+					// in USER mode, change camera position
+					if (playmode.camera_mode == USER)
+					{
+						move_camera(dt, node_);
+					}
+					WORLD_FROM_LOCAL = glm::mat4(node_->make_world_to_local());
+					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
+					CLIP_FROM_WORLD_SCENE = mat_perspective * WORLD_FROM_LOCAL;
+
+					// printMat4(WORLD_FROM_LOCAL);
+					// std::cout << "\n";
+					//  Now WORLD_FROM_LOCAL contains the final transformation from the local space of the camera to world space
+					//  std::cout << "Final WORLD_FROM_LOCAL for camera " << camera_name << " calculated." << std::endl;
+				}
+			}
 
 			for (const auto &obj_vertices : scene_object_vertices)
 			{
-				scene_instances.emplace_back(ScenesObjectInstance{
+				ScenesObjectInstance obj{
 					.vertices = obj_vertices,
 					.transform{
-						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-						.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL, // Assuming normal matrix is the same for simplicity
-						.WORLD_FROM_LOCAL_TANGENT = WORLD_FROM_LOCAL,
+						// .CLIP_FROM_LOCAL = CLIP_FROM_WORLD_SCENE * WORLD_FROM_LOCAL,
+						// .WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+						// .WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL, // Assuming normal matrix is the same for simplicity
+						// .WORLD_FROM_LOCAL_TANGENT = WORLD_FROM_LOCAL,
 					},
 					.texture = 0, // Assign the appropriate texture ID if needed
-				});
+				};
+
+				std::memcpy(obj.transform.CLIP_FROM_LOCAL.data(), glm::value_ptr(CLIP_FROM_WORLD_SCENE), sizeof(float) * 16);
+				// std::memcpy(obj.transform.CLIP_FROM_LOCAL.data(), glm::value_ptr(CLIP_FROM_WORLD_SCENE * WORLD_FROM_LOCAL), sizeof(float) * 16);
+				std::memcpy(obj.transform.WORLD_FROM_LOCAL.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
+				std::memcpy(obj.transform.WORLD_FROM_LOCAL_NORMAL.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
+				std::memcpy(obj.transform.WORLD_FROM_LOCAL_TANGENT.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
+
+				scene_instances.emplace_back(obj);
 			}
 		}
 	}
 }
 
-void Tutorial::on_input(InputEvent const &)
+void Tutorial::on_input(InputEvent const &evt)
 {
+	if (evt.type == InputEvent::KeyDown)
+	{
+		if (evt.key.key == GLFW_KEY_1)
+		{
+			if (playmode.camera_mode == SCENE)
+			{
+				auto it_camera = s72_scene.cameras.begin();
+				for (; it_camera != s72_scene.cameras.end(); ++it_camera)
+				{
+					if (it_camera->name == s72_scene.current_camera_->name && it_camera != s72_scene.cameras.end() - 1)
+					{
+						s72_scene.current_camera_ = &(*(it_camera + 1));
+						break;
+					}
+					else if (it_camera->name == s72_scene.current_camera_->name && it_camera == s72_scene.cameras.end() - 1)
+					{
+						s72_scene.current_camera_ = &(s72_scene.cameras[0]);
+						break;
+					}
+				}
+				std::cout << "Switch to another scene camera. Current camera name: " << s72_scene.current_camera_->name << "\n";
+			}
+			else
+			{
+				std::cout << "Set camera mode " << 1 << "\n";
+				playmode.camera_mode = SCENE;
+			}
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_2)
+		{
+			std::cout << "Set camera mode " << 2 << "\n";
+			playmode.camera_mode = USER;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_3)
+		{
+			std::cout << "Set camera mode " << 3 << "\n";
+			playmode.camera_mode = DEBUG;
+			return;
+		}
+		if (playmode.camera_mode == USER)
+		{
+			if (evt.key.key == GLFW_KEY_A)
+			{
+				// std::cout << "camera move left	 ";
+				playmode.left.downs += 1;
+				playmode.left.pressed = true;
+				return;
+			}
+			else if (evt.key.key == GLFW_KEY_D)
+			{
+				// std::cout << "camera move right	 ";
+				playmode.right.downs += 1;
+				playmode.right.pressed = true;
+				return;
+			}
+			else if (evt.key.key == GLFW_KEY_W)
+			{
+				// std::cout << "camera move up	 ";
+				playmode.up.downs += 1;
+				playmode.up.pressed = true;
+				return;
+			}
+			else if (evt.key.key == GLFW_KEY_S)
+			{
+				// std::cout << "camera move down	 ";
+				playmode.down.downs += 1;
+				playmode.down.pressed = true;
+				return;
+			}
+		}
+	}
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::KeyUp)
+	{
+		if (evt.key.key == GLFW_KEY_A)
+		{
+			playmode.left.pressed = false;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_D)
+		{
+			playmode.right.pressed = false;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_W)
+		{
+			playmode.up.pressed = false;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_S)
+		{
+			playmode.down.pressed = false;
+			return;
+		}
+	}
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseMotion)
+	{
+		if (s72_scene.current_camera_ != nullptr)
+		{
+			int width, height;
+			glfwGetWindowSize(rtg.window, &width, &height);
+			float rotation_coefficient = 0.01f;
+			glm::vec2 motion = glm::vec2(rotation_coefficient * evt.motion.x / float(width),
+										 rotation_coefficient * (-evt.motion.y) / float(height));
+
+			// std::cout << "mouse move: " << motion.x << ", " << motion.y << "    ";
+
+			[[maybe_unused]] Node *node_ = s72_scene.roots[s72_scene.current_camera_->name];
+
+			node_->rotation = glm::normalize(
+				node_->rotation * glm::angleAxis(-motion.x * s72_scene.current_camera_->perspective.vfov, glm::vec3(0.0f, 1.0f, 0.0f)) *
+				glm::angleAxis(motion.y * s72_scene.current_camera_->perspective.vfov, glm::vec3(1.0f, 0.0f, 0.0f)));
+
+			return;
+		}
+	}
+}
+
+void Tutorial::move_camera(float elapsed, Node *node_)
+{
+	// move camera:
+	{
+		// combine inputs into a move:
+		constexpr float PlayerSpeed = 5.f;
+		glm::vec2 move = glm::vec2(0.0f);
+		if (playmode.left.pressed && !playmode.right.pressed)
+			move.x = -1.0f;
+		if (!playmode.left.pressed && playmode.right.pressed)
+			move.x = 1.0f;
+		if (playmode.down.pressed && !playmode.up.pressed)
+			move.y = -1.0f;
+		if (!playmode.down.pressed && playmode.up.pressed)
+			move.y = 1.0f;
+
+		// make it so that moving diagonally doesn't go faster:
+		if (move != glm::vec2(0.0f))
+			move = glm::normalize(move) * PlayerSpeed * elapsed;
+
+		glm::mat4x3 frame = node_->make_local_to_parent();
+		glm::vec3 frame_right = frame[0];
+		// glm::vec3 up = frame[1];
+		glm::vec3 frame_forward = -frame[2];
+
+		node_->position += move.x * frame_right + move.y * frame_forward;
+	}
+
+	// reset button press counters:
+	playmode.left.downs = 0;
+	playmode.right.downs = 0;
+	playmode.up.downs = 0;
+	playmode.down.downs = 0;
 }
 
 void Tutorial::load_s72()

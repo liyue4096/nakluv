@@ -28,6 +28,8 @@ custom_flags_and_rules();
 // it returns the path to the output object file
 const main_objs = [
 	maek.CPP('Scene.cpp'),
+	//maek.CPP('controllers/Mode.cpp'),
+	//maek.CPP('controllers/PlayMode.cpp'),
 	maek.CPP('Tutorial.cpp'),
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
@@ -136,6 +138,7 @@ function custom_flags_and_rules() {
 			'User32.lib',
 			`/LIBPATH:${VULKAN_SDK}/Lib`,
 			'vulkan-1.lib',
+			//'SDL2.lib',
 			`/LIBPATH:../glfw-3.4.bin.WIN64/lib-vc2022`,
 			'glfw3.lib',
 			'gdi32.lib',

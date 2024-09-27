@@ -679,6 +679,7 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
 
 	if (action == GLFW_PRESS)
 	{
+		// std::cout << "mouse button pressed!\n";
 		event.type = InputEvent::MouseButtonDown;
 	}
 	else if (action == GLFW_RELEASE)

@@ -75,7 +75,11 @@
         "fstream": "cpp",
         "variant": "cpp",
         "codecvt": "cpp",
-        "filesystem": "cpp"
+        "filesystem": "cpp",
+        "deque": "cpp",
+        "random": "cpp",
+        "cinttypes": "cpp",
+        "csignal": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
