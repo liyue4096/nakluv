@@ -313,6 +313,13 @@ struct Tutorial : RTG::Application
 		} left, right, down, up;
 
 		Camera_Mode camera_mode = SCENE;
+
+		struct MouseState
+		{
+			float last_x = 0.0;
+			float last_y = 0.0;
+		} mouse_state;
+
 	} playmode;
 
 	virtual void move_camera(float elapsed, Node *node_);

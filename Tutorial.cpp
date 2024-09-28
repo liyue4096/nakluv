@@ -1780,9 +1780,11 @@ void Tutorial::on_input(InputEvent const &evt)
 		{
 			int width, height;
 			glfwGetWindowSize(rtg.window, &width, &height);
-			float rotation_coefficient = 0.01f;
-			glm::vec2 motion = glm::vec2(rotation_coefficient * evt.motion.x / float(width),
-										 rotation_coefficient * (-evt.motion.y) / float(height));
+			float rotation_coefficient = 0.5f;
+			float delta_x = evt.motion.x - playmode.mouse_state.last_x;
+			float delta_y = evt.motion.y - playmode.mouse_state.last_y;
+			glm::vec2 motion = glm::vec2(rotation_coefficient * delta_x / float(width),
+										 rotation_coefficient * (-delta_y) / float(height));
 
 			// std::cout << "mouse move: " << motion.x << ", " << motion.y << "    ";
 
@@ -1791,6 +1793,42 @@ void Tutorial::on_input(InputEvent const &evt)
 			node_->rotation = glm::normalize(
 				node_->rotation * glm::angleAxis(-motion.x * s72_scene.current_camera_->perspective.vfov, glm::vec3(0.0f, 1.0f, 0.0f)) *
 				glm::angleAxis(motion.y * s72_scene.current_camera_->perspective.vfov, glm::vec3(1.0f, 0.0f, 0.0f)));
+
+			// update mouse cor
+			// Define the edge threshold
+			int edge_threshold = 10;		   // Adjust this value based on your needs
+			float edge_rotation_speed = 0.01f; // Adjust this value to control how fast the camera rotates at the edge
+
+			// Check if the mouse is near the edge of the screen and apply additional rotation
+			if (evt.motion.x <= edge_threshold)
+			{
+				// Mouse is near the left edge, rotate the camera left
+				node_->rotation = glm::normalize(
+					node_->rotation * glm::angleAxis(edge_rotation_speed * s72_scene.current_camera_->perspective.vfov, glm::vec3(0.0f, 1.0f, 0.0f)));
+			}
+			else if (evt.motion.x >= width - edge_threshold)
+			{
+				// Mouse is near the right edge, rotate the camera right
+				node_->rotation = glm::normalize(
+					node_->rotation * glm::angleAxis(-edge_rotation_speed * s72_scene.current_camera_->perspective.vfov, glm::vec3(0.0f, 1.0f, 0.0f)));
+			}
+
+			if (evt.motion.y <= edge_threshold)
+			{
+				// Mouse is near the top edge, rotate the camera up
+				node_->rotation = glm::normalize(
+					node_->rotation * glm::angleAxis(edge_rotation_speed * s72_scene.current_camera_->perspective.vfov, glm::vec3(1.0f, 0.0f, 0.0f)));
+			}
+			else if (evt.motion.y >= height - edge_threshold)
+			{
+				// Mouse is near the bottom edge, rotate the camera down
+				node_->rotation = glm::normalize(
+					node_->rotation * glm::angleAxis(-edge_rotation_speed * s72_scene.current_camera_->perspective.vfov, glm::vec3(1.0f, 0.0f, 0.0f)));
+			}
+
+			// Update mouse coordinates
+			playmode.mouse_state.last_x = evt.motion.x;
+			playmode.mouse_state.last_y = evt.motion.y;
 
 			return;
 		}

@@ -59,7 +59,7 @@ void get_scene(const std::vector<sejp::value> &array)
             }
 
             // parse msg to Node
-            if (type_opt->second.as_string().value() == "NODE")
+            else if (type_opt->second.as_string().value() == "NODE")
             {
                 Node node;
 
@@ -156,7 +156,7 @@ void get_scene(const std::vector<sejp::value> &array)
             }
 
             // parse msg to Mesh
-            if (type_opt->second.as_string().value() == "MESH")
+            else if (type_opt->second.as_string().value() == "MESH")
             {
                 Mesh mesh;
 
@@ -255,7 +255,7 @@ void get_scene(const std::vector<sejp::value> &array)
             }
 
             // parse msg to Camera
-            if (type_opt->second.as_string().value() == "CAMERA")
+            else if (type_opt->second.as_string().value() == "CAMERA")
             {
                 Camera camera;
 
@@ -297,6 +297,95 @@ void get_scene(const std::vector<sejp::value> &array)
 
                 // Add the parsed camera to the cameras vector
                 s72_scene.cameras.push_back(camera);
+            }
+
+            // parse msg to Driver
+            else if (type_opt->second.as_string().value() == "DRIVER")
+            {
+                Driver driver;
+
+                // Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    driver.name = name_opt->second.as_string().value();
+                }
+                // Get "node" field
+                if (auto name_opt = obj.find("node"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    driver.refnode_name = name_opt->second.as_string().value();
+                }
+                // Get "channel" field
+                if (auto name_opt = obj.find("channel"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    std::string channel_str = name_opt->second.as_string().value();
+                    if (channel_str == "translation")
+                    {
+                        driver.channel = DriverChannleType::TRANSLATION;
+                        driver.channel_dim = 3;
+                    }
+                    if (channel_str == "scale")
+                    {
+                        driver.channel = DriverChannleType::SCALE;
+                        driver.channel_dim = 3;
+                    }
+                    if (channel_str == "rotation")
+                    {
+                        driver.channel = DriverChannleType::ROTATION;
+                        driver.channel_dim = 4;
+                    }
+                }
+                // Get "times" field
+                if (auto name_opt = obj.find("times"); name_opt != obj.end() && name_opt->second.as_array())
+                {
+                    auto &timesArray = name_opt->second.as_array().value();
+                    // std::cout << "times ";
+                    for (const auto &time : timesArray)
+                    {
+                        if (!time.as_number())
+                            continue;
+
+                        driver.times.push_back(static_cast<float>(time.as_number().value()));
+                        std::cout << time.as_number().value() << ", "; // [PASS]
+                    }
+                    // std::cout << std::endl;
+                }
+                // Get "values" field
+                if (auto name_opt = obj.find("values"); name_opt != obj.end() && name_opt->second.as_array())
+                {
+                    auto &valuesArray = name_opt->second.as_array().value();
+                    // std::cout << "values ";
+                    for (const auto &value : valuesArray)
+                    {
+                        if (!value.as_number())
+                            continue;
+
+                        driver.values.push_back(static_cast<float>(value.as_number().value()));
+                        // std::cout << value.as_number().value() << ", "; // [PASS]
+                    }
+                    // std::cout << std::endl;
+                }
+                if (auto name_opt = obj.find("interpolation"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+
+                    std::string interpolationStr = name_opt->second.as_string().value();
+                    if (interpolationStr == "STEP")
+                    {
+                        driver.interpolation = DriverInterpolation::STEP;
+                        // std::cout << "interpolation " << driverObject->interpolation << std::endl; // [PASS]
+                    }
+                    if (interpolationStr == "LINEAR")
+                    {
+                        driver.interpolation = DriverInterpolation::LINEAR;
+                        // std::cout << "interpolation " << driverObject->interpolation << std::endl; // [PASS]
+                    }
+                    if (interpolationStr == "SLERP")
+                    {
+                        driver.interpolation = DriverInterpolation::SLERP;
+                        // std::cout << "interpolation " << driverObject->interpolation << std::endl; // [PASS]
+                    }
+                }
+                // Add the parsed driver to the drivers vector
+                s72_scene.drivers.push_back(driver);
             }
         }
         index++;

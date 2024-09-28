@@ -25,6 +25,34 @@ enum Camera_Mode
     DEBUG = 3
 };
 
+enum DriverChannleType
+{
+    TRANSLATION,
+    SCALE,
+    ROTATION,
+};
+
+enum DriverInterpolation
+{
+    STEP,
+    LINEAR,
+    SLERP,
+};
+
+enum ProjectionType
+{
+    Perspective,
+    Orthographic
+};
+
+enum MaterialType
+{
+    PBR,
+    LAMBERTIAN,
+    MIRROR,
+    ENVIRONMENT,
+};
+
 struct Scene
 {
     std::string name;
@@ -112,6 +140,40 @@ struct Camera
     glm::mat4 make_projection() const;
 };
 
+struct Driver
+{
+    std::string name;
+    std::string refnode_name; // target object
+    DriverChannleType channel;
+    uint32_t channel_dim;
+    std::vector<float> times;
+    std::vector<float> values;
+    DriverInterpolation interpolation = DriverInterpolation::LINEAR;
+};
+
+// struct MaterialObject
+// {
+//     std::string name;
+//     std::optional<Texture> normalmap;       // std::nullopt
+//     std::optional<Texture> displacementmap; // std::nullopt
+//     MaterialType type;
+//     std::variant<std::monostate, PBRMaterial, LambertianMaterial> material; // std::monostate
+// };
+
+// struct EnvironmentObject
+// {
+//     std::string name;
+//     Texture radiance;
+// };
+
+// struct LightObject
+// {
+//     std::string name;
+//     glm::vec3 tint;
+//     std::variant<SunLight, SphereLight, SpotLight> light;
+//     uint32_t shadow;
+// };
+
 struct S72_scene
 {
     struct Scene scene;
@@ -121,6 +183,7 @@ struct S72_scene
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<Camera> cameras;
+    std::vector<Driver> drivers;
     Camera_Mode camera_mode = SCENE;
     Camera *current_camera_;
 };
