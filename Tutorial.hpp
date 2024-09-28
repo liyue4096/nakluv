@@ -246,7 +246,7 @@ struct Tutorial : RTG::Application
 	ObjectVertices torus_vertices;
 
 	std::vector<ObjectVertices> scene_object_vertices;
-	std::vector<mat4> scene_world_from_local; // one scene object to one mat4
+	std::vector<glm::mat4> scene_transform; // one scene object to one mat4
 
 	std::vector<Helpers::AllocatedImage> textures;
 	std::vector<VkImageView> texture_views;

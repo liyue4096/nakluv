@@ -345,7 +345,7 @@ void get_scene(const std::vector<sejp::value> &array)
                             continue;
 
                         driver.times.push_back(static_cast<float>(time.as_number().value()));
-                        std::cout << time.as_number().value() << ", "; // [PASS]
+                        // std::cout << time.as_number().value() << ", "; // [PASS]
                     }
                     // std::cout << std::endl;
                 }
@@ -485,9 +485,9 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
 
         if (child_node)
         {
-            std::cout << " child: " << child_node->name << "  mesh: " << child_node->mesh_name << " to parent: " << current_node->name << "\n";
-            //  Recursively build the tree for the child
-            // s72_scene.roots.push_back(child_node); // Store in roots
+            // std::cout << " child: " << child_node->name << "  mesh: " << child_node->mesh_name << " to parent: " << current_node->name << "\n";
+            //   Recursively build the tree for the child
+            //  s72_scene.roots.push_back(child_node); // Store in roots
             s72_scene.roots[child_node->name] = (child_node);
             dfs_build_tree(child_node, current_node, current_path); // Continue DFS
         }
@@ -528,7 +528,7 @@ void scene_workflow(sejp::value &val)
     }
 
     // debug: print msg
-    if (1)
+    if (0)
     {
         std::cout << "\nscene name: " << s72_scene.scene.name << std::endl;
         for (auto &a : s72_scene.scene.roots)

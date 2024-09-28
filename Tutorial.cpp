@@ -1354,14 +1354,14 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 				// no texture at present stage
 
 				// bind texture descriptor set:
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer,			   // command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
-					scenes_pipeline.layout,				   // pipeline layout
-					2,									   // second set
-					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
-					0, nullptr							   // dynamic offsets count, ptr
-				);
+				// vkCmdBindDescriptorSets(
+				// 	workspace.command_buffer,			   // command buffer
+				// 	VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
+				// 	scenes_pipeline.layout,				   // pipeline layout
+				// 	2,									   // second set
+				// 	1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
+				// 	0, nullptr							   // dynamic offsets count, ptr
+				// );
 				// std::cout << "ObjectInstance index: " << index << ", vertices count: " << inst.vertices.count << "\n";
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 			}
@@ -1644,15 +1644,24 @@ void Tutorial::update(float dt)
 					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
 					CLIP_FROM_WORLD_SCENE = mat_perspective * WORLD_FROM_LOCAL;
 
+					// std::cout << "make_world_to_local\n";
 					// printMat4(WORLD_FROM_LOCAL);
-					// std::cout << "\n";
+
+					// std::cout << "\nmake_local_to_world\n";
+					// printMat4(node_->make_local_to_world());
+
 					//  Now WORLD_FROM_LOCAL contains the final transformation from the local space of the camera to world space
 					//  std::cout << "Final WORLD_FROM_LOCAL for camera " << camera_name << " calculated." << std::endl;
 				}
 			}
 
+			int index = 0;
 			for (const auto &obj_vertices : scene_object_vertices)
 			{
+				glm::mat4 obj_transform = scene_transform[index];
+				// std::cout << "\nobject world from local\n";
+				// printMat4(obj_transform);
+				WORLD_FROM_LOCAL = obj_transform;
 				ScenesObjectInstance obj{
 					.vertices = obj_vertices,
 					.transform{
@@ -1664,13 +1673,16 @@ void Tutorial::update(float dt)
 					.texture = 0, // Assign the appropriate texture ID if needed
 				};
 
-				std::memcpy(obj.transform.CLIP_FROM_LOCAL.data(), glm::value_ptr(CLIP_FROM_WORLD_SCENE), sizeof(float) * 16);
+				// glm::mat4 obj_world_from_local = WORLD_FROM_LOCAL * glm::make_mat4(obj_transform.WORLD_FROM_LOCAL.data());
+
+				std::memcpy(obj.transform.CLIP_FROM_LOCAL.data(), glm::value_ptr(CLIP_FROM_WORLD_SCENE * WORLD_FROM_LOCAL), sizeof(float) * 16);
 				// std::memcpy(obj.transform.CLIP_FROM_LOCAL.data(), glm::value_ptr(CLIP_FROM_WORLD_SCENE * WORLD_FROM_LOCAL), sizeof(float) * 16);
 				std::memcpy(obj.transform.WORLD_FROM_LOCAL.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
 				std::memcpy(obj.transform.WORLD_FROM_LOCAL_NORMAL.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
 				std::memcpy(obj.transform.WORLD_FROM_LOCAL_TANGENT.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
 
 				scene_instances.emplace_back(obj);
+				index++;
 			}
 		}
 	}
@@ -1944,8 +1956,8 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 		vertices.push_back(vertex);
 	}
 
-	std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
-			  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
+	// std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
+	//		  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
 
 	file.close();
 
@@ -1955,6 +1967,14 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 	// Push the ObjectVertices to the scene_object_vertices vector
 	scene_object_vertices.push_back(obj_vertices);
 
+	// Push the transform matrix to scene_transform
+	glm::vec4 extra_column = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+	glm::mat4 combined_matrix = glm::mat4(
+		glm::vec4(node->make_local_to_world()[0], extra_column[0]),
+		glm::vec4(node->make_local_to_world()[1], extra_column[1]),
+		glm::vec4(node->make_local_to_world()[2], extra_column[2]),
+		glm::vec4(node->make_local_to_world()[3], extra_column[3]));
+	scene_transform.push_back(combined_matrix);
 	// If you need to create Vulkan buffers here, you can uncomment this:
 	// create_mesh_buffer(vertices, object_vertices);
 }
