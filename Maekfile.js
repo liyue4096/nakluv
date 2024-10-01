@@ -35,7 +35,7 @@ const main_objs = [
 	maek.CPP('lib/PosNorTexVertex.cpp'),
 	maek.CPP('lib/SceneVertex.cpp'),
 	maek.CPP('RTG.cpp'),
-	maek.CPP('Helpers.cpp'),
+	maek.CPP('helper/Helpers.cpp'),
 	maek.CPP('main.cpp'),
 	maek.CPP('include/sejp/sejp.cpp'),
 ];
@@ -48,28 +48,28 @@ const background_shaders = [
 	maek.GLSLC('./shaders/background.vert'),
 	maek.GLSLC('./shaders/background.frag'),
 ];
-main_objs.push( maek.CPP('Tutorial-BackgroundPipeline.cpp', undefined, { depends:[...background_shaders] } ) );
+main_objs.push( maek.CPP('pipelines/Tutorial-BackgroundPipeline.cpp', undefined, { depends:[...background_shaders] } ) );
 
 //uncomment to build lines shaders and pipeline:
 const lines_shaders = [
 	maek.GLSLC('./shaders/lines.vert'),
 	maek.GLSLC('./shaders/lines.frag'),
 ];
-main_objs.push( maek.CPP('Tutorial-LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
+main_objs.push( maek.CPP('pipelines/Tutorial-LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
 
 //uncomment to build objects shaders and pipeline:
 const objects_shaders = [
 	maek.GLSLC('./shaders/objects.vert'),
 	maek.GLSLC('./shaders/objects.frag'),
 ];
-main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+main_objs.push( maek.CPP('pipelines/Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
 //to build real_objects_shaders shaders and pipeline:
 const real_objects_shaders = [
 	maek.GLSLC('./shaders/real_objects.vert'),
 	maek.GLSLC('./shaders/real_objects.frag'),
 ];
-main_objs.push( maek.CPP('ScenesPipeline.cpp', undefined, { depends:[...real_objects_shaders] } ) );
+main_objs.push( maek.CPP('pipelines/ScenesPipeline.cpp', undefined, { depends:[...real_objects_shaders] } ) );
 
 // const prebuilt_objs = [ ];
 

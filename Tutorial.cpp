@@ -5,7 +5,7 @@
 
 #include "Tutorial.hpp"
 #include "scene.hpp"
-#include "VK.hpp"
+#include "helper/VK.hpp"
 #include <vulkan/vk_enum_string_helper.h>
 #include "GLFW\glfw3.h"
 #include <array>

@@ -1,43 +1,25 @@
-#include "Tutorial.hpp"
-#include "Helpers.hpp"
-#include "VK.hpp"
+#include "../Tutorial.hpp"
+#include "../helper/Helpers.hpp"
+#include "../helper/VK.hpp"
 
 static uint32_t vert_code[] =
-#include "spv/shaders/real_objects.vert.inl"
+#include "../spv/shaders/lines.vert.inl"
     ;
 
 static uint32_t frag_code[] =
-#include "spv/shaders/real_objects.frag.inl"
+#include "../spv/shaders/lines.frag.inl"
     ;
 
-void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t subpass)
+void Tutorial::LinesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t subpass)
 {
     VkShaderModule vert_module = rtg.helpers.create_shader_module(vert_code);
     VkShaderModule frag_module = rtg.helpers.create_shader_module(frag_code);
 
-    { // the set0_World layout holds world info in a uniform buffer used in the fragment shader:
+    { // the set0_Camera layout holds a Camera structure in a uniform buffer used in the vertex shader:
         std::array<VkDescriptorSetLayoutBinding, 1> bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .descriptorCount = 1,
-                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        };
-
-        VkDescriptorSetLayoutCreateInfo create_info{
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = uint32_t(bindings.size()),
-            .pBindings = bindings.data(),
-        };
-
-        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_World));
-    }
-
-    { // the set1_Transforms layout holds an array of Transform structures in a storage buffer used in the vertex shader:
-        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
-            VkDescriptorSetLayoutBinding{
-                .binding = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
         };
@@ -48,47 +30,21 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
             .pBindings = bindings.data(),
         };
 
-        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set1_Transforms));
-    }
-
-    { // the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader:
-        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
-            VkDescriptorSetLayoutBinding{
-                .binding = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = 1,
-                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        };
-
-        VkDescriptorSetLayoutCreateInfo create_info{
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = uint32_t(bindings.size()),
-            .pBindings = bindings.data(),
-        };
-
-        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE));
+        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_Camera));
     }
 
     {
         // create pipeline layout:
-        std::array<VkDescriptorSetLayout, 3> layouts{
-            set0_World,
-            set1_Transforms,
-            set2_TEXTURE,
-        };
-
-        VkPushConstantRange range{
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-            .offset = 0,
-            .size = sizeof(Push),
+        std::array<VkDescriptorSetLayout, 1> layouts{
+            set0_Camera,
         };
 
         VkPipelineLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = uint32_t(layouts.size()),
             .pSetLayouts = layouts.data(),
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &range,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = nullptr,
         };
 
         VK(vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
@@ -120,10 +76,10 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
             .dynamicStateCount = uint32_t((dynamic_states.size())),
             .pDynamicStates = dynamic_states.data()};
 
-        // this pipeline will draw triangles:
+        // this pipeline will draw lines:
         VkPipelineInputAssemblyStateCreateInfo input_assembly_state{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
             .primitiveRestartEnable = VK_FALSE};
 
         // this pipeline will render to one viewport and scissor rectangle:
@@ -139,7 +95,7 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
             .depthClampEnable = VK_FALSE,
             .rasterizerDiscardEnable = VK_FALSE,
             .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE,
+            .cullMode = VK_CULL_MODE_BACK_BIT,
             .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .depthBiasEnable = VK_FALSE,
             .lineWidth = 1.0f,
@@ -177,15 +133,12 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
             .blendConstants{0.0f, 0.0f, 0.0f, 0.0f},
         };
 
-        // set default false
-        VkPipelineVertexInputStateCreateInfo vertex_input_state = SceneVertex::get_vertex_input_state(false);
-
         // all of the above structures get bundled together into one very large create_info:
         VkGraphicsPipelineCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .stageCount = uint32_t(stages.size()),
             .pStages = stages.data(),
-            .pVertexInputState = &vertex_input_state,
+            .pVertexInputState = &Vertex::array_input_state,
             .pInputAssemblyState = &input_assembly_state,
             .pViewportState = &viewport_state,
             .pRasterizationState = &rasterization_state,
@@ -206,24 +159,12 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
     vkDestroyShaderModule(rtg.device, vert_module, nullptr);
 }
 
-void Tutorial::ScenesPipeline::destroy(RTG &rtg)
+void Tutorial::LinesPipeline::destroy(RTG &rtg)
 {
-    if (set2_TEXTURE != VK_NULL_HANDLE)
+    if (set0_Camera != VK_NULL_HANDLE)
     {
-        vkDestroyDescriptorSetLayout(rtg.device, set2_TEXTURE, nullptr);
-        set2_TEXTURE = VK_NULL_HANDLE;
-    }
-
-    if (set1_Transforms != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(rtg.device, set1_Transforms, nullptr);
-        set1_Transforms = VK_NULL_HANDLE;
-    }
-
-    if (set0_World != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(rtg.device, set0_World, nullptr);
-        set0_World = VK_NULL_HANDLE;
+        vkDestroyDescriptorSetLayout(rtg.device, set0_Camera, nullptr);
+        set0_Camera = VK_NULL_HANDLE;
     }
 
     if (layout != VK_NULL_HANDLE)

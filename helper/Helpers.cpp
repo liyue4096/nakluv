@@ -1,6 +1,6 @@
 #include "Helpers.hpp"
 
-#include "RTG.hpp"
+#include "../RTG.hpp"
 #include "VK.hpp"
 
 #include <vulkan/utility/vk_format_utils.h> //useful for byte counting

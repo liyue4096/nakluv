@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Helpers.hpp"
-#include "InputEvent.hpp"
+#include "helper/Helpers.hpp"
+#include "controllers/InputEvent.hpp"
 
 #include <vulkan/vulkan_core.h>
 
