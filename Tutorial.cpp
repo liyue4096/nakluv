@@ -21,6 +21,7 @@
 #include <filesystem>
 
 #include "include/sejp/sejp.hpp"
+#include "lib/bbox.h"
 
 std::chrono::time_point<std::chrono::high_resolution_clock> start, end;
 
@@ -402,7 +403,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	}
 
 	{
-		// TODO: create scene object vertices
+		// create scene object vertices
 		std::vector<SceneVertex> vertices;
 
 		load_vertex_from_b72(vertices);
@@ -1354,14 +1355,14 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 				// no texture at present stage
 
 				// bind texture descriptor set:
-				// vkCmdBindDescriptorSets(
-				// 	workspace.command_buffer,			   // command buffer
-				// 	VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
-				// 	scenes_pipeline.layout,				   // pipeline layout
-				// 	2,									   // second set
-				// 	1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
-				// 	0, nullptr							   // dynamic offsets count, ptr
-				// );
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,			   // command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
+					scenes_pipeline.layout,				   // pipeline layout
+					2,									   // second set
+					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
+					0, nullptr							   // dynamic offsets count, ptr
+				);
 				// std::cout << "ObjectInstance index: " << index << ", vertices count: " << inst.vertices.count << "\n";
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 			}
@@ -1399,7 +1400,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 void Tutorial::update(float dt)
 {
-	time = std::fmod(time + dt, 60.0f);
+	time = std::fmod(playmode.time + dt, s72_scene.animation_duration);
 
 	{ // camera orbiting the origin:
 
@@ -1618,12 +1619,36 @@ void Tutorial::update(float dt)
 			glm::mat4 CLIP_FROM_WORLD_SCENE(1.0f);
 			glm::mat4 WORLD_FROM_LOCAL_debug(1.0f);
 
+			// update transforms
+			// in PLAY Animation_Mode, multiple animation matrix
+			if (playmode.animation_mode == PLAY && !s72_scene.drivers.empty())
+			{
+				playmode.time += dt;
+				if (playmode.time > s72_scene.animation_duration)
+				{
+					playmode.time -= s72_scene.animation_duration;
+				}
+				// std::cout << "play: " << playmode.time << "\n";
+
+				for (auto &driver : s72_scene.drivers)
+				{
+					std::string node_name = driver.refnode_name;
+					Node *node_ = s72_scene.nodes_map[node_name];
+					driver.make_animation(playmode.time);
+					s72_scene.transforms[node_] = node_->make_local_to_world();
+
+					node_->child_forward_kinematics_transforms(node_);
+					//   WORLD_FROM_LOCAL *= ANIMATION_MATRIX;
+				}
+			}
+
 			if (!s72_scene.cameras.empty())
 			{
 				if (s72_scene.current_camera_ == nullptr)
 				{
 					s72_scene.current_camera_ = &(s72_scene.cameras[0]);
 				}
+
 				// TODO: for this camera, calculate the WORLD_FROM_LOCAL from path
 				std::string camera_name = s72_scene.current_camera_->name; // Assuming the first camera
 				if (s72_scene.cameras_path.find(camera_name) != s72_scene.cameras_path.end())
@@ -1633,16 +1658,16 @@ void Tutorial::update(float dt)
 					float near = s72_scene.current_camera_->perspective.near;
 					float far = s72_scene.current_camera_->perspective.far;
 
-					Node *node_ = s72_scene.roots[camera_name];
+					Node *camera_node_ = s72_scene.nodes_map[camera_name];
 
 					// in USER mode, change camera position
 					if (playmode.camera_mode == USER)
 					{
-						move_camera(dt, node_);
+						move_camera(dt, camera_node_);
 					}
-					WORLD_FROM_LOCAL = glm::mat4(node_->make_world_to_local());
+
 					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
-					CLIP_FROM_WORLD_SCENE = mat_perspective * WORLD_FROM_LOCAL;
+					CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
 
 					// std::cout << "make_world_to_local\n";
 					// printMat4(WORLD_FROM_LOCAL);
@@ -1655,15 +1680,30 @@ void Tutorial::update(float dt)
 				}
 			}
 
-			int index = 0;
-			for (const auto &obj_vertices : scene_object_vertices)
+			for (const auto &scene_object : scene_objects)
 			{
-				glm::mat4 obj_transform = scene_transform[index];
+				Node *node_ = scene_object.object_node_;
+
+				glm::mat4 obj_transform = s72_scene.transforms[node_];
 				// std::cout << "\nobject world from local\n";
 				// printMat4(obj_transform);
+
 				WORLD_FROM_LOCAL = obj_transform;
+
+				// culling
+				if (playmode.camera_mode == DEBUG || playmode.cull_mode == FRUSTUM) // (playmode.cull_mode == FRUSTUM)
+				{
+					BBox bbox_trans = s72_scene.bboxes[node_].transform(WORLD_FROM_LOCAL);
+					auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
+
+					if (bbox_trans.is_bbox_in_frustum(planes) == false)
+					{
+						continue;
+					}
+				}
+
 				ScenesObjectInstance obj{
-					.vertices = obj_vertices,
+					.vertices = scene_object.scene_object_vertices,
 					.transform{
 						// .CLIP_FROM_LOCAL = CLIP_FROM_WORLD_SCENE * WORLD_FROM_LOCAL,
 						// .WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
@@ -1682,7 +1722,6 @@ void Tutorial::update(float dt)
 				std::memcpy(obj.transform.WORLD_FROM_LOCAL_TANGENT.data(), glm::value_ptr(WORLD_FROM_LOCAL), sizeof(float) * 16);
 
 				scene_instances.emplace_back(obj);
-				index++;
 			}
 		}
 	}
@@ -1714,21 +1753,35 @@ void Tutorial::on_input(InputEvent const &evt)
 			}
 			else
 			{
-				std::cout << "Set camera mode " << 1 << "\n";
+				std::cout << "Set camera mode " << 1 << " : scene camera\n";
 				playmode.camera_mode = SCENE;
 			}
 			return;
 		}
 		else if (evt.key.key == GLFW_KEY_2)
 		{
-			std::cout << "Set camera mode " << 2 << "\n";
+			std::cout << "Set camera mode " << 2 << " : user camera\n";
 			playmode.camera_mode = USER;
 			return;
 		}
 		else if (evt.key.key == GLFW_KEY_3)
 		{
-			std::cout << "Set camera mode " << 3 << "\n";
+			std::cout << "Set camera mode " << 3 << " : debug camera\n";
 			playmode.camera_mode = DEBUG;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_SPACE)
+		{
+			if (playmode.animation_mode == PAUSE)
+			{
+				std::cout << "start play " << "\n";
+				playmode.animation_mode = PLAY;
+			}
+			else
+			{
+				std::cout << "pause " << "\n";
+				playmode.animation_mode = PAUSE;
+			}
 			return;
 		}
 		if (playmode.camera_mode == USER)
@@ -1800,7 +1853,7 @@ void Tutorial::on_input(InputEvent const &evt)
 
 			// std::cout << "mouse move: " << motion.x << ", " << motion.y << "    ";
 
-			[[maybe_unused]] Node *node_ = s72_scene.roots[s72_scene.current_camera_->name];
+			[[maybe_unused]] Node *node_ = s72_scene.nodes_map[s72_scene.current_camera_->name];
 
 			node_->rotation = glm::normalize(
 				node_->rotation * glm::angleAxis(-motion.x * s72_scene.current_camera_->perspective.vfov, glm::vec3(0.0f, 1.0f, 0.0f)) *
@@ -1892,6 +1945,7 @@ void Tutorial::load_s72()
 	// std::map<std::string, sejp::value> const &object = val.as_object().value();
 }
 
+// dfs order
 void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 {
 	if (!node || !node->mesh_)
@@ -1918,6 +1972,8 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 	ObjectVertices obj_vertices;
 	obj_vertices.first = static_cast<uint32_t>(vertices.size());
 
+	BBox bbox;
+
 	// Read each vertex by its stride
 	for (uint32_t i = 0; i < mesh->count; ++i)
 	{
@@ -1930,6 +1986,9 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 		// Extract Position
 		const auto &pos_attr = mesh->attributes.at("POSITION");
 		std::memcpy(&vertex.Position, buffer.data() + pos_attr.offset, sizeof(vertex.Position));
+
+		// include vertex in bbox
+		bbox.enclose(glm::vec3(vertex.Position.x, vertex.Position.y, vertex.Position.z));
 
 		// Extract Normal
 		const auto &normal_attr = mesh->attributes.at("NORMAL");
@@ -1955,6 +2014,8 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 		// Push the vertex into the vertices vector
 		vertices.push_back(vertex);
 	}
+	// save in global
+	s72_scene.bboxes[node] = bbox;
 
 	// std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
 	//		  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
@@ -1964,8 +2025,11 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 	// Set vertex count in object_vertices
 	obj_vertices.count = mesh->count;
 
+	SceneObject scene_object;
+	scene_object.scene_object_vertices = obj_vertices;
+
 	// Push the ObjectVertices to the scene_object_vertices vector
-	scene_object_vertices.push_back(obj_vertices);
+	// scene_object_vertices.push_back(obj_vertices);
 
 	// Push the transform matrix to scene_transform
 	glm::vec4 extra_column = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -1974,9 +2038,14 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 		glm::vec4(node->make_local_to_world()[1], extra_column[1]),
 		glm::vec4(node->make_local_to_world()[2], extra_column[2]),
 		glm::vec4(node->make_local_to_world()[3], extra_column[3]));
-	scene_transform.push_back(combined_matrix);
-	// If you need to create Vulkan buffers here, you can uncomment this:
-	// create_mesh_buffer(vertices, object_vertices);
+	// scene_transform.push_back(combined_matrix);
+
+	scene_object.scene_transform = combined_matrix;
+	scene_object.object_node_ = node;
+	scene_objects.push_back(scene_object);
+
+	// save in global
+	s72_scene.transforms[node] = combined_matrix;
 }
 
 void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
@@ -2002,7 +2071,7 @@ void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
 	};
 
 	// Start DFS from each root node in the scene
-	for (const auto &[key, root_node] : s72_scene.roots)
+	for (const auto &[key, root_node] : s72_scene.nodes_map)
 	{
 		dfs_process_node(root_node);
 	}

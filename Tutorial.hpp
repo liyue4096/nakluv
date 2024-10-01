@@ -1,8 +1,8 @@
 #pragma once
-#include "PosColVertex.hpp"
-#include "PosNorTexVertex.hpp"
-#include "SceneVertex.hpp"
-#include "mat4.hpp"
+#include "lib/PosColVertex.hpp"
+#include "lib/PosNorTexVertex.hpp"
+#include "lib/SceneVertex.hpp"
+#include "lib/mat4.hpp"
 #include "RTG.hpp"
 #include "Scene.hpp"
 
@@ -245,8 +245,14 @@ struct Tutorial : RTG::Application
 	ObjectVertices plane_vertices;
 	ObjectVertices torus_vertices;
 
-	std::vector<ObjectVertices> scene_object_vertices;
-	std::vector<glm::mat4> scene_transform; // one scene object to one mat4
+	struct SceneObject
+	{
+		ObjectVertices scene_object_vertices;
+		glm::mat4 scene_transform;
+		Node *object_node_;
+	};
+
+	std::vector<SceneObject> scene_objects;
 
 	std::vector<Helpers::AllocatedImage> textures;
 	std::vector<VkImageView> texture_views;
@@ -313,6 +319,9 @@ struct Tutorial : RTG::Application
 		} left, right, down, up;
 
 		Camera_Mode camera_mode = SCENE;
+		Animation_Mode animation_mode = PAUSE;
+		Cull_Mode cull_mode = DEFAULT;
+		float time = 0.f; // this is for antimation, it will pause when animation_mode = PAUSE
 
 		struct MouseState
 		{

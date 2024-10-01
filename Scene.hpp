@@ -15,14 +15,30 @@
 #include <map>
 #include <optional>
 
+#include "lib/bbox.h"
+
 struct Mesh;
 struct Camera;
+struct Driver;
+
+enum Animation_Mode
+{
+    PAUSE,
+    PLAY,
+};
 
 enum Camera_Mode
 {
     SCENE = 1,
     USER = 2,
-    DEBUG = 3
+    DEBUG = 3,
+};
+
+enum Cull_Mode
+{
+    DEFAULT,
+    NONE,
+    FRUSTUM,
 };
 
 enum DriverChannleType
@@ -63,27 +79,13 @@ struct Node
 {
     std::string name;
 
-    // struct
-    // {
-    //     float tx = 0.f, ty = 0.f, tz = 0.f;
-    // } Translation;
-
-    // struct
-    // {
-    //     float rw = 1.f, rx = 0.f, ry = 0.f, rz = 0.f; // n.b. wxyz init order
-    // } Rotation;
-
-    // struct
-    // {
-    //     float sx = 1.f, sy = 1.f, sz = 1.f;
-    // } Scale;
-
     // The core function of a transform is to store a transformation in the world:
     glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f);
     glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // n.b. wxyz init order
     glm::vec3 scale = glm::vec3(1.0f, 1.0f, 1.0f);
 
     std::vector<std::variant<std::string, double>> children;
+    std::vector<Node *> children_node_;
 
     std::string mesh_name;
     std::string camera_name;
@@ -94,6 +96,9 @@ struct Node
 
     Mesh *mesh_ = nullptr;
     Camera *camera_ = nullptr;
+    // Driver *driver_ = nullptr;
+
+    // void make_animation(float time);
 
     // ..relative to its parent:
     glm::mat4x3 make_local_to_parent() const;
@@ -101,6 +106,8 @@ struct Node
     // ..relative to the world:
     glm::mat4x3 make_local_to_world() const;
     glm::mat4x3 make_world_to_local() const;
+
+    void child_forward_kinematics_transforms(Node *node_);
 };
 
 struct Mesh
@@ -146,9 +153,26 @@ struct Driver
     std::string refnode_name; // target object
     DriverChannleType channel;
     uint32_t channel_dim;
-    std::vector<float> times;
-    std::vector<float> values;
+
+    struct Frame
+    {
+        float time;
+        std::vector<float> value;
+    };
+
+    std::vector<Frame> frames;
+
     DriverInterpolation interpolation = DriverInterpolation::LINEAR;
+
+    // for animation use
+    uint32_t current_frame = 0;
+    uint32_t next_frame = 0;
+
+    glm::vec3 position_init = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec3 scale_init = glm::vec3(1.0f, 1.0f, 1.0f);
+    glm::quat rotation_init = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // n.b. wxyz init order
+
+    void make_animation(float time);
 };
 
 // struct MaterialObject
@@ -177,9 +201,12 @@ struct Driver
 struct S72_scene
 {
     struct Scene scene;
+    float animation_duration = 0.f;
     // std::vector<Node *> roots;
-    std::unordered_map<std::string, Node *> roots;
+    std::unordered_map<std::string, Node *> nodes_map;
     std::unordered_map<std::string, std::vector<Node *>> cameras_path;
+    std::unordered_map<Node *, glm::mat4> transforms;
+    std::unordered_map<Node *, BBox> bboxes;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<Camera> cameras;
@@ -194,6 +221,9 @@ Camera *find_camera_by_name(const std::string &camera_name);
 Node *find_node_by_name_or_index(const std::variant<std::string, double> &root);
 void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> &);
 void build_node_trees();
+void bind_driver();
+
+// set up all the info from s72 file
 void scene_workflow(sejp::value &val);
 
 glm::mat4 generate_transform(const Node *node);

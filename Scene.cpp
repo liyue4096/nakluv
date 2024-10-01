@@ -3,6 +3,7 @@
 // Define the global variable
 S72_scene s72_scene;
 
+// read s72 file
 void get_scene(const std::vector<sejp::value> &array)
 {
     // std::cout << "\narray size(): " << array.size() << "\n";
@@ -334,35 +335,49 @@ void get_scene(const std::vector<sejp::value> &array)
                         driver.channel_dim = 4;
                     }
                 }
-                // Get "times" field
-                if (auto name_opt = obj.find("times"); name_opt != obj.end() && name_opt->second.as_array())
+                // Get "frames" field by combining "times" and "values"
+                if (auto times_opt = obj.find("times"); times_opt != obj.end() && times_opt->second.as_array())
                 {
-                    auto &timesArray = name_opt->second.as_array().value();
-                    // std::cout << "times ";
-                    for (const auto &time : timesArray)
+                    auto &timesArray = times_opt->second.as_array().value();
+                    if (auto values_opt = obj.find("values"); values_opt != obj.end() && values_opt->second.as_array())
                     {
-                        if (!time.as_number())
-                            continue;
+                        auto &valuesArray = values_opt->second.as_array().value();
+                        float dt = 0.f;
+                        // Check if the values array size is correct: timesArray.size() * channel_dim == valuesArray.size()
+                        if (timesArray.size() * driver.channel_dim == valuesArray.size())
+                        {
+                            for (size_t i = 0; i < timesArray.size(); ++i)
+                            {
+                                if (!timesArray[i].as_number())
+                                    continue;
 
-                        driver.times.push_back(static_cast<float>(time.as_number().value()));
-                        // std::cout << time.as_number().value() << ", "; // [PASS]
-                    }
-                    // std::cout << std::endl;
-                }
-                // Get "values" field
-                if (auto name_opt = obj.find("values"); name_opt != obj.end() && name_opt->second.as_array())
-                {
-                    auto &valuesArray = name_opt->second.as_array().value();
-                    // std::cout << "values ";
-                    for (const auto &value : valuesArray)
-                    {
-                        if (!value.as_number())
-                            continue;
+                                Driver::Frame frame;
+                                frame.time = static_cast<float>(timesArray[i].as_number().value());
+                                // std::cout << frame.time << ":  ";
+                                //  Extract channel_dim values for each frame
+                                for (size_t j = 0; j < driver.channel_dim; ++j)
+                                {
+                                    if (valuesArray[i * driver.channel_dim + j].as_number())
+                                    {
+                                        frame.value.push_back(static_cast<float>(valuesArray[i * driver.channel_dim + j].as_number().value()));
+                                    }
+                                    // std::cout << frame.value[j] << ",";
+                                }
 
-                        driver.values.push_back(static_cast<float>(value.as_number().value()));
-                        // std::cout << value.as_number().value() << ", "; // [PASS]
+                                // std::cout << "    ";
+
+                                driver.frames.push_back(frame);
+
+                                if (frame.time > s72_scene.animation_duration)
+                                {
+                                    dt = frame.time - s72_scene.animation_duration;
+                                    s72_scene.animation_duration = frame.time;
+                                }
+                            }
+                            // for the last frame interpolation in loop animation
+                            s72_scene.animation_duration += dt;
+                        }
                     }
-                    // std::cout << std::endl;
                 }
                 if (auto name_opt = obj.find("interpolation"); name_opt != obj.end() && name_opt->second.as_string())
                 {
@@ -485,13 +500,15 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
 
         if (child_node)
         {
+            current_node->children_node_.push_back(child_node);
             // std::cout << " child: " << child_node->name << "  mesh: " << child_node->mesh_name << " to parent: " << current_node->name << "\n";
             //   Recursively build the tree for the child
-            //  s72_scene.roots.push_back(child_node); // Store in roots
-            s72_scene.roots[child_node->name] = (child_node);
+            //  s72_scene.nodes_map.push_back(child_node); // Store in nodes_map
+            s72_scene.nodes_map[child_node->name] = child_node;
             dfs_build_tree(child_node, current_node, current_path); // Continue DFS
         }
     }
+    std::cout << current_node->name << " children #:  " << current_node->children_node_.size() << "\n";
 
     // Remove the current node from the path after processing all children
     current_path.pop_back();
@@ -499,7 +516,7 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
 
 void build_node_trees()
 {
-    s72_scene.roots.clear();
+    s72_scene.nodes_map.clear();
     s72_scene.cameras_path.clear();
 
     for (auto &root : s72_scene.scene.roots)
@@ -510,10 +527,31 @@ void build_node_trees()
         if (root_node != nullptr)
         {
             // Start DFS from this root node
-            // s72_scene.roots.push_back(root_node); // Store root node
-            s72_scene.roots[root_node->name] = (root_node);
+            // s72_scene.nodes_map.push_back(root_node); // Store root node
+            s72_scene.nodes_map[root_node->name] = (root_node);
             // std::cout << "\ndfs_build_tree\n";
             dfs_build_tree(root_node, nullptr, path); // Build the tree from this root
+        }
+    }
+}
+
+// set up initial node position/scale/rotation
+void bind_driver()
+{
+    if (s72_scene.drivers.empty())
+    {
+        return;
+    }
+
+    for (auto &driver : s72_scene.drivers)
+    {
+        auto node_name = driver.refnode_name;
+        if (s72_scene.nodes_map.find(node_name) != s72_scene.nodes_map.end())
+        {
+            Node *node_ = s72_scene.nodes_map[node_name];
+            driver.position_init = node_->position;
+            driver.rotation_init = node_->rotation;
+            driver.scale_init = node_->scale;
         }
     }
 }
@@ -583,6 +621,9 @@ void scene_workflow(sejp::value &val)
 
     // step2: build node trees and bind mesh, camera
     build_node_trees();
+
+    // step3: bind driver to node
+    bind_driver();
 }
 
 glm::mat4 generate_transform(const Node *node)
@@ -591,7 +632,6 @@ glm::mat4 generate_transform(const Node *node)
     glm::mat4 translation_matrix = glm::translate(glm::mat4(1.0f), node->position);
 
     // Rotation matrix from quaternion
-    // glm::quat rotation_quat = glm::quat(node->Rotation.rw, node->Rotation.rx, node->Rotation.ry, node->Rotation.rz);
     glm::mat4 rotation_matrix = glm::mat4_cast(node->rotation);
 
     // Scale matrix
@@ -603,6 +643,131 @@ glm::mat4 generate_transform(const Node *node)
     return WORLD_FROM_LOCAL;
 }
 
+void Driver::make_animation(float time)
+{
+    if (s72_scene.nodes_map.find(this->refnode_name) == s72_scene.nodes_map.end())
+        return;
+
+    Node *node_ = s72_scene.nodes_map[this->refnode_name];
+
+    uint32_t size = (uint32_t)(this->frames.size());
+    [[maybe_unused]] float min_time = this->frames[0].time,
+                           max_time = this->frames[size - 1].time,
+                           fraction;
+
+    if (time > max_time)
+    {
+        current_frame = size - 1;
+        next_frame = 0;
+        fraction = (time - max_time) / (s72_scene.animation_duration - max_time);
+        fraction = std::clamp(fraction, 0.f, 1.f);
+    }
+    else
+    {
+        while (time > this->frames[next_frame].time)
+        {
+            next_frame++;
+            if (current_frame == size - 1) // a new loop
+            {
+                current_frame = 0;
+            }
+            else
+            {
+                current_frame++;
+            }
+        }
+        fraction = (time - frames[current_frame].time) / (frames[next_frame].time - frames[current_frame].time);
+        fraction = std::clamp(fraction, 0.f, 1.f);
+    }
+
+    // calculate interpolation matrix
+    if (this->channel_dim == 3)
+    {
+        auto start = glm::vec3(frames[current_frame].value[0],
+                               frames[current_frame].value[1],
+                               frames[current_frame].value[2]);
+
+        auto end = glm::vec3(frames[next_frame].value[0],
+                             frames[next_frame].value[1],
+                             frames[next_frame].value[2]);
+
+        if (interpolation == STEP)
+        {
+            if (channel == TRANSLATION)
+            {
+                node_->position = start;
+                // auto result = glm::translate(glm::mat4(1.0f), start);
+                return;
+            }
+            else if (channel == SCALE)
+            {
+                node_->scale = start;
+                return;
+            }
+        }
+        else
+        {
+            auto vec3_interpolation = glm::mix(start, end, fraction);
+
+            if (channel == TRANSLATION)
+            {
+                node_->position = vec3_interpolation;
+                // return glm::translate(glm::mat4(1.0f), vec3_interpolation);
+                return;
+            }
+            else if (channel == SCALE)
+            {
+                node_->scale = vec3_interpolation;
+                // return glm::scale(glm::mat4(1.0f), vec3_interpolation);
+                return;
+            }
+        }
+    }
+    else if (channel_dim == 4)
+    {
+        auto start = glm::quat(frames[current_frame].value[3],
+                               frames[current_frame].value[0],
+                               frames[current_frame].value[1],
+                               frames[current_frame].value[2]);
+
+        auto end = glm::quat(frames[next_frame].value[3],
+                             frames[next_frame].value[0],
+                             frames[next_frame].value[1],
+                             frames[next_frame].value[2]);
+
+        if (interpolation == SLERP)
+        {
+            glm::quat quat_interpolation = glm::slerp(start, end, fraction);
+            node_->rotation = quat_interpolation;
+            return; // glm::mat4_cast(quat_interpolation);
+        }
+        else
+        {
+            glm::quat quat_interpolation = glm::mix(start, end, fraction);
+            node_->rotation = quat_interpolation;
+            return; // glm::mat4_cast(quat_interpolation);
+        }
+    }
+}
+
+void Node::child_forward_kinematics_transforms(Node *node_)
+{
+    if (node_ == nullptr)
+    {
+        return;
+    }
+
+    for (const auto &child_ : node_->children_node_)
+    {
+        s72_scene.transforms[child_] = glm::mat4(child_->make_local_to_world());
+        child_forward_kinematics_transforms(child_);
+    }
+}
+
+//--------------------------------------
+// the code below is from 15466 base code
+// https://github.com/15-466/15-466-f24-base2
+//--------------------------------------
 glm::mat4x3 Node::make_local_to_parent() const
 {
     // compute:
@@ -611,10 +776,6 @@ glm::mat4x3 Node::make_local_to_parent() const
     //  [ 0 1 0 p.y ] * [ rot   0 ] * [ 0 s.y 0 0 ]
     //  [ 0 0 1 p.z ]   [       0 ]   [ 0 0 s.z 0 ]
     //                  [ 0 0 0 1 ]   [ 0 0   0 1 ]
-    // glm::quat rotation = glm::quat(Rotation.rw, Rotation.rx, Rotation.ry, Rotation.rz);
-    // glm::vec3 position = glm::vec3(Translation.tx, Translation.ty, Translation.tz);
-    // glm::vec3 scale = glm::vec3(Scale.sx, Scale.sy, Scale.sz);
-
     glm::mat3 rot = glm::mat3_cast(rotation);
 
     return glm::mat4x3(
@@ -632,10 +793,6 @@ glm::mat4x3 Node::make_parent_to_local() const
     //  [ 0 1/s.y 0 0 ] * [rot^-1 0 ] * [ 0 0 0 -p.y ]
     //  [ 0 0 1/s.z 0 ]   [       0 ]   [ 0 0 0 -p.z ]
     //                    [ 0 0 0 1 ]   [ 0 0 0  1   ]
-    // glm::quat rotation = glm::quat(Rotation.rw, Rotation.rx, Rotation.ry, Rotation.rz);
-    // glm::vec3 position = glm::vec3(Translation.tx, Translation.ty, Translation.tz);
-    // glm::vec3 scale = glm::vec3(Scale.sx, Scale.sy, Scale.sz);
-
     glm::vec3 inv_scale;
     // taking some care so that we don't end up with NaN's , just a degenerate matrix, if scale is zero:
     inv_scale.x = (scale.x == 0.0f ? 0.0f : 1.0f / scale.x);
