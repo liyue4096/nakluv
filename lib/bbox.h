@@ -168,37 +168,23 @@ struct BBox
 
     glm::vec3 min, max;
 
-    bool is_bbox_in_frustum(const std::array<Plane, 6> &planes)
+    bool is_bbox_outside_frustum(const std::array<Plane, 6> &planes)
     {
-        glm::vec3 vertices[8] = {
-            glm::vec3(min.x, min.y, min.z),
-            glm::vec3(max.x, min.y, min.z),
-            glm::vec3(min.x, max.y, min.z),
-            glm::vec3(max.x, max.y, min.z),
-            glm::vec3(min.x, min.y, max.z),
-            glm::vec3(max.x, min.y, max.z),
-            glm::vec3(min.x, max.y, max.z),
-            glm::vec3(max.x, max.y, max.z),
-        };
-
-        for (const auto &plane : planes)
+        for (const Plane &plane : planes)
         {
-            // int out = 0;
-            for (int i = 0; i < 8; i++)
+            glm::vec3 nearest_point = min;
+            if (plane.normal.x > 0)
+                nearest_point.x = max.x;
+            if (plane.normal.y > 0)
+                nearest_point.y = max.y;
+            if (plane.normal.z > 0)
+                nearest_point.z = max.z;
+
+            if (glm::dot(plane.normal, nearest_point) + plane.distance < 0)
             {
-                if (glm::dot(plane.normal, vertices[i]) + plane.distance < 0)
-                {
-                    // out++;
-                    return true;
-                }
+                return true;
             }
-
-            // if (out == 8)
-            // {
-            //     return false;
-            // }
         }
-
         return false;
     }
 };
@@ -230,8 +216,10 @@ inline std::array<Plane, 6> extract_planes(const glm::mat4 &matrix)
     planes[3].distance = matrix[3][3] - matrix[3][1];
 
     // Near
-    planes[4].normal = glm::vec3(matrix[0][3] + matrix[0][2], matrix[1][3] + matrix[1][2], matrix[2][3] + matrix[2][2]);
-    planes[4].distance = matrix[3][3] + matrix[3][2];
+    // planes[4].normal = glm::vec3(matrix[0][3] + matrix[0][2], matrix[1][3] + matrix[1][2], matrix[2][3] + matrix[2][2]);
+    // planes[4].distance = matrix[3][3] + matrix[3][2];
+    planes[4].normal = glm::vec3(matrix[0][2], matrix[1][2], matrix[2][2]);
+    planes[4].distance = matrix[3][2];
 
     // Far
     planes[5].normal = glm::vec3(matrix[0][3] - matrix[0][2], matrix[1][3] - matrix[1][2], matrix[2][3] - matrix[2][2]);

@@ -491,52 +491,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 		}
 	}
 
-	{ // texture 2 will be a metallic bronze texture:
-		// set the size of the texture:
-		uint32_t size = 256;
-		std::vector<uint32_t> data;
-		data.reserve(size * size);
-
-		// iterate over each pixel:
-		for (uint32_t y = 0; y < size; ++y)
-		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				// Create a metallic bronze color by adjusting the r, g, b channels
-				// Introduce some shininess by modulating the colors based on x and y
-				uint8_t base_r = 150 + uint8_t((std::sin(x * 0.1f) + std::sin(y * 0.1f)) * 30.0f);	// base red with light variation
-				uint8_t base_g = 60 + uint8_t((std::sin(x * 0.15f) + std::sin(y * 0.15f)) * 25.0f); // base green
-				uint8_t base_b = 30 + uint8_t((std::cos(x * 0.1f) + std::cos(y * 0.1f)) * 10.0f);	// base blue, darker for bronze
-
-				// Apply metallic shininess by adding highlights:
-				float shine = std::abs(std::sin(x * 0.05f + y * 0.05f)) * 50.0f;
-
-				// Combine the base color with the shininess:
-				uint8_t r = uint8_t(std::min(255.0f, base_r + shine));
-				uint8_t g = uint8_t(std::min(255.0f, base_g + shine));
-				uint8_t b = uint8_t(std::min(255.0f, base_b + shine));
-				uint8_t a = 0xff; // fully opaque
-
-				// Combine r, g, b, a into a single 32-bit value:
-				data.emplace_back(uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24));
-			}
-		}
-
-		assert(data.size() == size * size);
-
-		// create the image on the GPU:
-		textures.emplace_back(rtg.helpers.create_image(
-			VkExtent2D{.width = size, .height = size}, // size of image
-			VK_FORMAT_R8G8B8A8_SRGB,				   // 8-bit RGBA with SRGB encoding
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // sample and upload
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // device-local memory
-			Helpers::Unmapped));
-
-		// transfer the generated data to the GPU:
-		rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-	}
-
 	{ // make image views for the textures
 		texture_views.reserve(textures.size());
 		for (Helpers::AllocatedImage const &image : textures)
@@ -1667,6 +1621,7 @@ void Tutorial::update(float dt)
 					}
 
 					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
+
 					CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
 
 					// std::cout << "make_world_to_local\n";
@@ -1693,10 +1648,12 @@ void Tutorial::update(float dt)
 				// culling
 				if (playmode.camera_mode == DEBUG || playmode.cull_mode == FRUSTUM) // (playmode.cull_mode == FRUSTUM)
 				{
-					BBox bbox_trans = s72_scene.bboxes[node_].transform(WORLD_FROM_LOCAL);
+
+					auto mesh_ = node_->mesh_;
+					BBox bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(s72_scene.transforms[node_]);
 					auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
 
-					if (bbox_trans.is_bbox_in_frustum(planes) == false)
+					if (bbox_trans.is_bbox_outside_frustum(planes) == true)
 					{
 						continue;
 					}
@@ -1945,88 +1902,101 @@ void Tutorial::load_s72()
 	// std::map<std::string, sejp::value> const &object = val.as_object().value();
 }
 
+void Tutorial::set_mesh_vertices_map(std::vector<SceneVertex> &vertices)
+{
+	for (auto &mesh : s72_scene.meshes)
+	{
+		// Get the source file from the POSITION attribute
+		const std::string b72_file_path = "./resource/" + mesh.attributes.at("POSITION").src;
+
+		const uint32_t stride = mesh.attributes.at("POSITION").stride;
+
+		// Open the .b72 file
+		std::ifstream file(b72_file_path, std::ios::binary);
+		if (!file.is_open())
+		{
+			std::cerr << "Failed to open file: " << b72_file_path << std::endl;
+			continue;
+		}
+
+		bool has_color = mesh.attributes.find("COLOR") != mesh.attributes.end();
+
+		// Create ObjectVertices and bbox for this mesh
+		MsehVertices mesh_vertices;
+		BBox bbox;
+
+		mesh_vertices.first = static_cast<uint32_t>(vertices.size());
+
+		// Read each vertex by its stride
+		for (uint32_t i = 0; i < mesh.count; ++i)
+		{
+			SceneVertex vertex;
+
+			// Read a stride worth of data into a buffer
+			std::vector<char> buffer(stride);
+			file.read(buffer.data(), stride);
+
+			// Extract Position
+			const auto &pos_attr = mesh.attributes.at("POSITION");
+			std::memcpy(&vertex.Position, buffer.data() + pos_attr.offset, sizeof(vertex.Position));
+
+			// include vertex in bbox
+			bbox.enclose(glm::vec3(vertex.Position.x, vertex.Position.y, vertex.Position.z));
+
+			// Extract Normal
+			const auto &normal_attr = mesh.attributes.at("NORMAL");
+			std::memcpy(&vertex.Normal, buffer.data() + normal_attr.offset, sizeof(vertex.Normal));
+
+			// Extract Tangent
+			const auto &tangent_attr = mesh.attributes.at("TANGENT");
+			std::memcpy(&vertex.Tangent, buffer.data() + tangent_attr.offset, sizeof(vertex.Tangent));
+
+			// Extract TexCoord
+			const auto &texcoord_attr = mesh.attributes.at("TEXCOORD");
+			std::memcpy(&vertex.TexCoord, buffer.data() + texcoord_attr.offset, sizeof(vertex.TexCoord));
+
+			// Extract Color if present
+			if (has_color)
+			{
+				glm::u8vec4 color;
+				const auto &color_attr = mesh.attributes.at("COLOR");
+				std::memcpy(&color, buffer.data() + color_attr.offset, sizeof(color));
+				vertex.color = std::optional<Color>{{color.r, color.g, color.b, color.a}};
+			}
+
+			// Push the vertex into the vertices vector
+			vertices.push_back(vertex);
+		}
+		// save in global
+		s72_scene.mesh_bbox_map[&mesh] = bbox;
+
+		// Set vertex count in object_vertices
+		mesh_vertices.count = mesh.count;
+
+		s72_scene.mesh_vertices_map[&mesh] = mesh_vertices;
+
+		// std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
+		//		  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
+
+		file.close();
+	}
+}
+
 // dfs order
 void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 {
 	if (!node || !node->mesh_)
 		return;
 
-	const Mesh *mesh = node->mesh_;
-
-	// Get the source file from the POSITION attribute
-	const std::string b72_file_path = "./resource/" + mesh->attributes.at("POSITION").src;
-
-	const uint32_t stride = mesh->attributes.at("POSITION").stride;
-
-	// Open the .b72 file
-	std::ifstream file(b72_file_path, std::ios::binary);
-	if (!file.is_open())
-	{
-		std::cerr << "Failed to open file: " << b72_file_path << std::endl;
-		return;
-	}
-
-	bool has_color = mesh->attributes.find("COLOR") != mesh->attributes.end();
+	Mesh *mesh_ = node->mesh_;
 
 	// Create ObjectVertices for this mesh
-	ObjectVertices obj_vertices;
-	obj_vertices.first = static_cast<uint32_t>(vertices.size());
-
-	BBox bbox;
-
-	// Read each vertex by its stride
-	for (uint32_t i = 0; i < mesh->count; ++i)
-	{
-		SceneVertex vertex;
-
-		// Read a stride worth of data into a buffer
-		std::vector<char> buffer(stride);
-		file.read(buffer.data(), stride);
-
-		// Extract Position
-		const auto &pos_attr = mesh->attributes.at("POSITION");
-		std::memcpy(&vertex.Position, buffer.data() + pos_attr.offset, sizeof(vertex.Position));
-
-		// include vertex in bbox
-		bbox.enclose(glm::vec3(vertex.Position.x, vertex.Position.y, vertex.Position.z));
-
-		// Extract Normal
-		const auto &normal_attr = mesh->attributes.at("NORMAL");
-		std::memcpy(&vertex.Normal, buffer.data() + normal_attr.offset, sizeof(vertex.Normal));
-
-		// Extract Tangent
-		const auto &tangent_attr = mesh->attributes.at("TANGENT");
-		std::memcpy(&vertex.Tangent, buffer.data() + tangent_attr.offset, sizeof(vertex.Tangent));
-
-		// Extract TexCoord
-		const auto &texcoord_attr = mesh->attributes.at("TEXCOORD");
-		std::memcpy(&vertex.TexCoord, buffer.data() + texcoord_attr.offset, sizeof(vertex.TexCoord));
-
-		// Extract Color if present
-		if (has_color)
-		{
-			glm::u8vec4 color;
-			const auto &color_attr = mesh->attributes.at("COLOR");
-			std::memcpy(&color, buffer.data() + color_attr.offset, sizeof(color));
-			vertex.color = std::optional<Color>{{color.r, color.g, color.b, color.a}};
-		}
-
-		// Push the vertex into the vertices vector
-		vertices.push_back(vertex);
-	}
-	// save in global
-	s72_scene.bboxes[node] = bbox;
-
-	// std::cout << "Last vertex coordinates: " << vertices.back().Position.x << ", "
-	//		  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
-
-	file.close();
-
-	// Set vertex count in object_vertices
-	obj_vertices.count = mesh->count;
+	auto obj_vertices = s72_scene.mesh_vertices_map[mesh_];
 
 	SceneObject scene_object;
-	scene_object.scene_object_vertices = obj_vertices;
+	std::memcpy(&(scene_object.scene_object_vertices), &obj_vertices, sizeof(obj_vertices));
+
+	// scene_object.scene_object_vertices = obj_vertices;
 
 	// Push the ObjectVertices to the scene_object_vertices vector
 	// scene_object_vertices.push_back(obj_vertices);
@@ -2050,6 +2020,9 @@ void Tutorial::process_node(std::vector<SceneVertex> &vertices, Node *node)
 
 void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
 {
+	// std::cout << "load_vertex_from_b72\n";
+	set_mesh_vertices_map(vertices);
+
 	// DFS function to traverse and process vertices for each node
 	std::function<void(Node *)> dfs_process_node = [&](Node *node)
 	{
@@ -2075,4 +2048,5 @@ void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
 	{
 		dfs_process_node(root_node);
 	}
+	// std::cout << "load_vertex_from_b72 done\n";
 }

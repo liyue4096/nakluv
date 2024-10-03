@@ -37,6 +37,35 @@ void RTG::Configuration::parse(int argc, char **argv)
 			scene_name = argv[argi];
 			// std::cout << scene_name << std::endl;
 		}
+		else if (arg == "--camera")
+		{
+			if (argi + 1 >= argc)
+				throw std::runtime_error("--camera requires a parameter (a camera name).");
+			argi += 1;
+			camera_name = argv[argi];
+			// std::cout << scene_name << std::endl;
+		}
+		else if (arg == "--culling")
+		{
+			if (argi + 1 >= argc)
+				throw std::runtime_error("--culling requires a parameter (a culling mode).");
+			argi += 1;
+			if (std::string(argv[argi]) == "none")
+			{
+				cull_mode = NONE;
+			}
+			else if (std::string(argv[argi]) == "frustum")
+			{
+				cull_mode = FRUSTUM;
+			}
+		}
+		else if (arg == "--headless")
+		{
+			if (argi + 1 >= argc)
+				throw std::runtime_error("--headless requires a parameter (events).");
+			argi += 1;
+			headless = true;
+		}
 		else if (arg == "--physical-device")
 		{
 			if (argi + 1 >= argc)
@@ -188,6 +217,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 		}
 	}
 
+	if (!configuration.headless)
 	{ // create the `window` and `surface` (where things get drawn):
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
@@ -284,6 +314,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 		}
 	}
 
+	if (!configuration.headless)
 	{ // select the `surface_format` and `present_mode` which control how colors are represented on the surface and how new images are supplied to the surface:
 		std::vector<VkSurfaceFormatKHR> formats;
 		std::vector<VkPresentModeKHR> present_modes;
@@ -423,7 +454,8 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 	}
 
 	// create initial swapchain:
-	recreate_swapchain();
+	if (!configuration.headless)
+		recreate_swapchain();
 
 	// create workspace resources:
 	workspaces.resize(configuration.workspaces);
@@ -788,7 +820,8 @@ void RTG::run(Application &application)
 		// event handling:
 		glfwPollEvents();
 
-		// deliver all input events to application:
+		// TODO: PLAY
+		//  deliver all input events to application:
 		for (InputEvent const &input : event_queue)
 		{
 			application.on_input(input);
@@ -801,7 +834,7 @@ void RTG::run(Application &application)
 			before = after;
 
 			dt = std::min(dt, 0.1f); // lag if frame rate dips too low
-
+									 // TODO: MARK
 			application.update(dt);
 		}
 
@@ -821,29 +854,37 @@ void RTG::run(Application &application)
 			}
 
 			uint32_t image_index = -1U;
-			// acquire an image:
-		retry:
-			// Ask the swapchain for the next image index -- note careful return handling:
-			if (VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, workspaces[workspace_index].image_available, VK_NULL_HANDLE, &image_index);
-				result == VK_ERROR_OUT_OF_DATE_KHR)
-			{
-				// if the swapchain is out-of-date, recreate it and run the loop again:
-				std::cerr << "Recreating swapchain because vkAcquireNextImageKHR returned " << string_VkResult(result) << "." << std::endl;
 
-				recreate_swapchain();
-				on_swapchain();
+			if (!configuration.headless)
+			{
+				// acquire an image:
+			retry:
+				// Ask the swapchain for the next image index -- note careful return handling:
+				if (VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, workspaces[workspace_index].image_available, VK_NULL_HANDLE, &image_index);
+					result == VK_ERROR_OUT_OF_DATE_KHR)
+				{
+					// if the swapchain is out-of-date, recreate it and run the loop again:
+					std::cerr << "Recreating swapchain because vkAcquireNextImageKHR returned " << string_VkResult(result) << "." << std::endl;
 
-				goto retry;
+					recreate_swapchain();
+					on_swapchain();
+
+					goto retry;
+				}
+				else if (result == VK_SUBOPTIMAL_KHR)
+				{
+					// if the swapchain is suboptimal, render to it and recreate it later:
+					std::cerr << "Suboptimal swapchain format -- ignoring for the moment." << std::endl;
+				}
+				else if (result != VK_SUCCESS)
+				{
+					// other non-success results are genuine errors:
+					throw std::runtime_error("Failed to acquire swapchain image (" + std::string(string_VkResult(result)) + ")!");
+				}
 			}
-			else if (result == VK_SUBOPTIMAL_KHR)
+			else
 			{
-				// if the swapchain is suboptimal, render to it and recreate it later:
-				std::cerr << "Suboptimal swapchain format -- ignoring for the moment." << std::endl;
-			}
-			else if (result != VK_SUCCESS)
-			{
-				// other non-success results are genuine errors:
-				throw std::runtime_error("Failed to acquire swapchain image (" + std::string(string_VkResult(result)) + ")!");
+				// TODO: acquire image: available
 			}
 
 			// call render function:
@@ -855,6 +896,7 @@ void RTG::run(Application &application)
 										  .workspace_available = workspaces[workspace_index].workspace_available,
 									  });
 
+			if (!configuration.headless)
 			{ // queue the work for presentation:
 				VkPresentInfoKHR present_info{
 					.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -881,6 +923,10 @@ void RTG::run(Application &application)
 				}
 			}
 			// TODO: present image (resize swapchain if needed)
+			else
+			{
+				// TODO: SAVE file.ppm
+			}
 		}
 	}
 

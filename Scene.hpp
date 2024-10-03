@@ -69,6 +69,12 @@ enum MaterialType
     ENVIRONMENT,
 };
 
+struct MsehVertices
+{
+    uint32_t first = 0;
+    uint32_t count = 0;
+};
+
 struct Scene
 {
     std::string name;
@@ -206,7 +212,9 @@ struct S72_scene
     std::unordered_map<std::string, Node *> nodes_map;
     std::unordered_map<std::string, std::vector<Node *>> cameras_path;
     std::unordered_map<Node *, glm::mat4> transforms;
-    std::unordered_map<Node *, BBox> bboxes;
+    // std::unordered_map<Node *, BBox> bboxes;
+    std::unordered_map<Mesh *, MsehVertices> mesh_vertices_map;
+    std::unordered_map<Mesh *, BBox> mesh_bbox_map;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<Camera> cameras;
@@ -222,6 +230,7 @@ Node *find_node_by_name_or_index(const std::variant<std::string, double> &root);
 void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> &);
 void build_node_trees();
 void bind_driver();
+void make_user_camera();
 
 // set up all the info from s72 file
 void scene_workflow(sejp::value &val);

@@ -508,7 +508,7 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
             dfs_build_tree(child_node, current_node, current_path); // Continue DFS
         }
     }
-    std::cout << current_node->name << " children #:  " << current_node->children_node_.size() << "\n";
+    // std::cout << current_node->name << " children #:  " << current_node->children_node_.size() << "\n";
 
     // Remove the current node from the path after processing all children
     current_path.pop_back();
@@ -624,6 +624,51 @@ void scene_workflow(sejp::value &val)
 
     // step3: bind driver to node
     bind_driver();
+
+    // step4: add a camera if no camera exists
+    if (s72_scene.cameras.empty())
+    {
+        std::cout << "\nmake user camera\n";
+        make_user_camera();
+    }
+}
+
+void make_user_camera()
+{
+    Camera camera;
+
+    camera.name = "User-Camera";
+    camera.perspective.aspect = 1.77778f;
+    camera.perspective.vfov = 2.08544f;
+    camera.perspective.near = 0.1f;
+    camera.perspective.far = 1000.f;
+
+    s72_scene.cameras.push_back(camera);
+
+    Node node;
+    std::vector<Node *> path;
+    Node *ref_node_ = find_node_by_name_or_index(s72_scene.scene.roots[0]);
+    if (!ref_node_)
+    {
+        std::cerr << "ref_node_ is nullptr\n";
+        return;
+    }
+
+    node.name = "User-Camera";
+    node.position = 2.f * ref_node_->position;
+    node.rotation = ref_node_->rotation;
+    node.scale = ref_node_->scale;
+    node.camera_name = "User-Camera";
+    node.camera_ = &(s72_scene.cameras.back());
+
+    s72_scene.nodes.push_back(node);
+    s72_scene.nodes_map[node.name] = &(s72_scene.nodes.back());
+    s72_scene.scene.roots.push_back(node.name);
+
+    path.push_back(&node);
+    s72_scene.cameras_path[node.camera_name] = path;
+
+    // std::cout << "add user-camera done\n";
 }
 
 glm::mat4 generate_transform(const Node *node)

@@ -2,6 +2,7 @@
 
 #include "helper/Helpers.hpp"
 #include "controllers/InputEvent.hpp"
+#include "Scene.hpp"
 
 #include <vulkan/vulkan_core.h>
 
@@ -60,6 +61,13 @@ struct RTG
 		std::string physical_device_name = "";
 
 		std::string scene_name = "";
+
+		std::string camera_name = "";
+
+		Cull_Mode cull_mode = DEFAULT;
+
+		// if true, set on headless mode:
+		bool headless = false;
 
 		// requested (priority-ranked) formats for output surface: (will use first available)
 		std::vector<VkSurfaceFormatKHR> surface_formats{

@@ -261,6 +261,7 @@ struct Tutorial : RTG::Application
 	std::vector<VkDescriptorSet> texture_descriptors; // allocated from texture_descriptor_pool
 
 	void load_s72();
+	void set_mesh_vertices_map(std::vector<SceneVertex> &vertices);
 	void process_node(std::vector<SceneVertex> &vertices, Node *node);
 	void load_vertex_from_b72(std::vector<SceneVertex> &vertices);
 	//--------------------------------------------------------------------
