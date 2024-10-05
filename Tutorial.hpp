@@ -184,6 +184,21 @@ struct Tutorial : RTG::Application
 		void destroy(RTG &);
 	} scenes_pipeline;
 
+	struct HeadlessPipeline
+	{
+		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+		VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+		// VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+		VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+		VkPipeline pipeline = VK_NULL_HANDLE;
+		VkShaderModule shaderModule = VK_NULL_HANDLE;
+
+		std::vector<uint32_t> computeInput = std::vector<uint32_t>(32);
+
+		void create(RTG &);
+		void destroy(RTG &);
+	} headless_pipeline;
+
 	// pools from which per-workspace things are allocated:
 	VkCommandPool command_pool = VK_NULL_HANDLE;
 
@@ -223,10 +238,15 @@ struct Tutorial : RTG::Application
 		Helpers::AllocatedBuffer Scene_world;	  // device-local
 		VkDescriptorSet Scene_world_descriptors;  // references World
 
-		// location for ObjectsPipeline::Transforms data: (streamed to GPU per-frame)
+		// location for ScenesPipeline::Transforms data: (streamed to GPU per-frame)
 		Helpers::AllocatedBuffer Scene_transforms_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Scene_transforms;	   // device-local
 		VkDescriptorSet Scene_transforms_descriptors;  // references Transforms
+
+		// location for ScenesPipeline::Transforms data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Headless_src; // host coherent; mapped
+		Helpers::AllocatedBuffer Headless;	   // device-local
+		VkDescriptorSet Headless_descriptors;  // references Headless
 	};
 	std::vector<Workspace> workspaces;
 
@@ -235,6 +255,8 @@ struct Tutorial : RTG::Application
 	Helpers::AllocatedBuffer object_vertices;
 
 	Helpers::AllocatedBuffer scene_vertices;
+
+	Helpers::AllocatedBuffer headless_resource;
 
 	struct ObjectVertices
 	{

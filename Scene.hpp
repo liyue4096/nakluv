@@ -212,7 +212,6 @@ struct S72_scene
     std::unordered_map<std::string, Node *> nodes_map;
     std::unordered_map<std::string, std::vector<Node *>> cameras_path;
     std::unordered_map<Node *, glm::mat4> transforms;
-    // std::unordered_map<Node *, BBox> bboxes;
     std::unordered_map<Mesh *, MsehVertices> mesh_vertices_map;
     std::unordered_map<Mesh *, BBox> mesh_bbox_map;
     std::vector<Node> nodes;

@@ -71,6 +71,12 @@ const real_objects_shaders = [
 ];
 main_objs.push( maek.CPP('pipelines/ScenesPipeline.cpp', undefined, { depends:[...real_objects_shaders] } ) );
 
+//to build headless shaders and pipeline:
+const headless_shaders = [
+	maek.GLSLC('./shaders/headless.comp'),
+];
+main_objs.push( maek.CPP('pipelines/HeadlessPipeline.cpp', undefined, { depends:[...headless_shaders] } ) );
+
 // const prebuilt_objs = [ ];
 
 // //use the prebuilt refsol.o unless refsol.cpp exists:

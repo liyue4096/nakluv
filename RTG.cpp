@@ -386,22 +386,28 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 
 				// if it has present support, set the present queue family:
 				VkBool32 present_support = VK_FALSE;
-				VK(vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, surface, &present_support));
+				if (!this->configuration.headless)
+				{
+					VK(vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, i, surface, &present_support));
+				}
+
 				if (present_support == VK_TRUE)
 				{
 					if (!present_queue_family)
 						present_queue_family = i;
 				}
 			}
-
-			if (!graphics_queue_family)
+			if (!this->configuration.headless)
 			{
-				throw std::runtime_error("No queue with graphics support.");
-			}
+				if (!graphics_queue_family)
+				{
+					throw std::runtime_error("No queue with graphics support.");
+				}
 
-			if (!present_queue_family)
-			{
-				throw std::runtime_error("No queue with present support.");
+				if (!present_queue_family)
+				{
+					throw std::runtime_error("No queue with present support.");
+				}
 			}
 		}
 
@@ -413,6 +419,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 		// Add the swapchain extension:
 		device_extensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
+		if (!this->configuration.headless)
 		{ // create the logical device:
 			std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
 			std::set<uint32_t> unique_queue_families{
@@ -450,6 +457,46 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 
 			vkGetDeviceQueue(device, graphics_queue_family.value(), 0, &graphics_queue);
 			vkGetDeviceQueue(device, present_queue_family.value(), 0, &present_queue);
+		}
+		else
+		{
+			// in headless mode we just need graphic_queue
+			std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+			std::set<uint32_t> unique_queue_families{graphics_queue_family.value()};
+
+			float queue_priorities = 0.f;
+			for (uint32_t queue_family : unique_queue_families)
+			{
+				VkDeviceQueueCreateInfo queue_info = {};
+				queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+				queue_info.queueFamilyIndex = queue_family;
+				queue_info.queueCount = 1;
+				queue_info.pQueuePriorities = &queue_priorities;
+
+				queue_create_infos.emplace_back(queue_info);
+			}
+
+			VkDeviceCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+				.queueCreateInfoCount = uint32_t(queue_create_infos.size()),
+				.pQueueCreateInfos = queue_create_infos.data(),
+
+				// device layers are depreciated; spec suggests passing instance_layers or nullptr:
+				.enabledLayerCount = 0,
+				.ppEnabledLayerNames = nullptr,
+
+				.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size()),
+				.ppEnabledExtensionNames = device_extensions.data(),
+
+				// pass a pointer to a VkPhysicalDeviceFeatures to request specific features: (e.g., thick lines)
+				.pEnabledFeatures = nullptr,
+			};
+
+			VK(vkCreateDevice(physical_device, &create_info, nullptr, &device));
+
+			vkGetDeviceQueue(device, graphics_queue_family.value(), 0, &graphics_queue);
+
+			std::cout << "vkGetDeviceQueue done!\n";
 		}
 	}
 
@@ -644,7 +691,7 @@ void RTG::recreate_swapchain()
 		VK(vkCreateImageView(device, &create_info, nullptr, &swapchain_image_views[i]));
 	}
 
-	if (configuration.debug)
+	if (!configuration.headless && configuration.debug)
 	{
 		std::cout << "Swapchain is now " << swapchain_images.size() << " images of size " << swapchain_extent.width << "x" << swapchain_extent.height << "." << std::endl;
 		std::cout << "min and max image counts: " << capabilities.minImageCount << ", " << capabilities.maxImageCount << "\n";
@@ -793,6 +840,9 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
 
 void RTG::run(Application &application)
 {
+	// setup event handling:
+	std::vector<InputEvent> event_queue;
+
 	// initial on_swapchain
 	auto on_swapchain = [&, this]()
 	{
@@ -802,23 +852,27 @@ void RTG::run(Application &application)
 											.image_views = swapchain_image_views,
 										});
 	};
-	on_swapchain();
 
-	// setup event handling:
-	std::vector<InputEvent> event_queue;
-	glfwSetWindowUserPointer(window, &event_queue);
+	if (!configuration.headless)
+	{
+		on_swapchain();
 
-	glfwSetCursorPosCallback(window, cursor_pos_callback);
-	glfwSetMouseButtonCallback(window, mouse_button_callback);
-	glfwSetScrollCallback(window, scroll_callback);
-	glfwSetKeyCallback(window, key_callback);
+		glfwSetWindowUserPointer(window, &event_queue);
+		glfwSetCursorPosCallback(window, cursor_pos_callback);
+		glfwSetMouseButtonCallback(window, mouse_button_callback);
+		glfwSetScrollCallback(window, scroll_callback);
+		glfwSetKeyCallback(window, key_callback);
+	}
 
 	std::chrono::high_resolution_clock::time_point before = std::chrono::high_resolution_clock::now();
 
-	while (!glfwWindowShouldClose(window))
+	while (configuration.headless || !glfwWindowShouldClose(window))
 	{
-		// event handling:
-		glfwPollEvents();
+		if (!configuration.headless)
+		{
+			// event handling:
+			glfwPollEvents();
+		}
 
 		// TODO: PLAY
 		//  deliver all input events to application:
@@ -885,6 +939,10 @@ void RTG::run(Application &application)
 			else
 			{
 				// TODO: acquire image: available
+
+				// vkQueueSubmit(graphics_queue, 1, &availableInfo, VK_NULL_HANDLE);
+
+				std::cout << "AVAILABLE\n";
 			}
 
 			// call render function:
@@ -925,7 +983,9 @@ void RTG::run(Application &application)
 			// TODO: present image (resize swapchain if needed)
 			else
 			{
-				// TODO: SAVE file.ppm
+				// vkQueueSubmit(graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+				//  TODO: SAVE file.ppm
+				std::cout << "SAVE file.ppm\n";
 			}
 		}
 	}

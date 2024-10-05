@@ -61,6 +61,11 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			},
 		};
 
+		if (rtg.configuration.headless)
+		{
+			attachments[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+		}
+
 		// subpass
 		VkAttachmentReference color_attachment_ref{
 			.attachment = 0,
@@ -126,9 +131,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	// load scene file .72
 	load_s72();
 
-	// background_pipeline.create(rtg, render_pass, 0);
-	lines_pipeline.create(rtg, render_pass, 0);
-	objects_pipeline.create(rtg, render_pass, 0);
+	if (!rtg.configuration.headless)
+	{
+		// background_pipeline.create(rtg, render_pass, 0);
+		lines_pipeline.create(rtg, render_pass, 0);
+		objects_pipeline.create(rtg, render_pass, 0);
+	}
+
 	scenes_pipeline.create(rtg, render_pass, 0);
 
 	// create descriptor pool:
@@ -174,63 +183,66 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			VK(vkAllocateCommandBuffers(rtg.device, &alloc_info, &workspace.command_buffer));
 		}
 
-		workspace.Camera_src = rtg.helpers.create_buffer(
-			sizeof(LinesPipeline::Camera),
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
-			Helpers::Mapped																// get a pointer to the memory
-		);
-		workspace.Camera = rtg.helpers.create_buffer(
-			sizeof(LinesPipeline::Camera),
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as a uniform buffer, also going to have GPU copy into this memory
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
-			Helpers::Unmapped													   // don't get a pointer to the memory
-		);
+		if (!rtg.configuration.headless)
+		{
+			workspace.Camera_src = rtg.helpers.create_buffer(
+				sizeof(LinesPipeline::Camera),
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+				Helpers::Mapped																// get a pointer to the memory
+			);
+			workspace.Camera = rtg.helpers.create_buffer(
+				sizeof(LinesPipeline::Camera),
+				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as a uniform buffer, also going to have GPU copy into this memory
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
+				Helpers::Unmapped													   // don't get a pointer to the memory
+			);
 
-		{ // allocate descriptor set for Camera descriptor
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &lines_pipeline.set0_Camera,
-			};
+			{ // allocate descriptor set for Camera descriptor
+				VkDescriptorSetAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+					.descriptorPool = descriptor_pool,
+					.descriptorSetCount = 1,
+					.pSetLayouts = &lines_pipeline.set0_Camera,
+				};
 
-			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Camera_descriptors));
-		}
+				VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Camera_descriptors));
+			}
 
-		workspace.World_src = rtg.helpers.create_buffer(
-			sizeof(ObjectsPipeline::World),
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			Helpers::Mapped);
-		workspace.World = rtg.helpers.create_buffer(
-			sizeof(ObjectsPipeline::World),
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			Helpers::Unmapped);
+			workspace.World_src = rtg.helpers.create_buffer(
+				sizeof(ObjectsPipeline::World),
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				Helpers::Mapped);
+			workspace.World = rtg.helpers.create_buffer(
+				sizeof(ObjectsPipeline::World),
+				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped);
 
-		{ // allocate descriptor set for World descriptor
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &objects_pipeline.set0_World,
-			};
+			{ // allocate descriptor set for World descriptor
+				VkDescriptorSetAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+					.descriptorPool = descriptor_pool,
+					.descriptorSetCount = 1,
+					.pSetLayouts = &objects_pipeline.set0_World,
+				};
 
-			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.World_descriptors));
-			// NOTE: will actually fill in this descriptor set just a bit lower
-		}
+				VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.World_descriptors));
+				// NOTE: will actually fill in this descriptor set just a bit lower
+			}
 
-		{ // allocate descriptor set for Transforms descriptor
-			VkDescriptorSetAllocateInfo alloc_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.descriptorPool = descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &objects_pipeline.set1_Transforms,
-			};
+			{ // allocate descriptor set for Transforms descriptor
+				VkDescriptorSetAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+					.descriptorPool = descriptor_pool,
+					.descriptorSetCount = 1,
+					.pSetLayouts = &objects_pipeline.set1_Transforms,
+				};
 
-			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors));
-			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
+				VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors));
+				// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
+			}
 		}
 
 		workspace.Scene_world_src = rtg.helpers.create_buffer(
@@ -269,7 +281,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
-		{ // point descriptor to Camera buffer:
+		{ // point descriptor to buffer:
 			VkDescriptorBufferInfo Camera_info{
 				.buffer = workspace.Camera.handle,
 				.offset = 0,
@@ -288,35 +300,40 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 				.range = workspace.Scene_world.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 3> writes{
-				VkWriteDescriptorSet{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = workspace.Camera_descriptors,
-					.dstBinding = 0,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-					.pBufferInfo = &Camera_info,
-				},
-				VkWriteDescriptorSet{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = workspace.World_descriptors,
-					.dstBinding = 0,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-					.pBufferInfo = &World_info,
-				},
-				VkWriteDescriptorSet{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = workspace.Scene_world_descriptors,
-					.dstBinding = 0,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-					.pBufferInfo = &Scene_world_info,
-				},
-			};
+			std::vector<VkWriteDescriptorSet> writes;
+
+			if (!rtg.configuration.headless)
+			{
+				{
+					writes.emplace_back(VkWriteDescriptorSet{
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = workspace.Camera_descriptors,
+						.dstBinding = 0,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+						.pBufferInfo = &Camera_info,
+					});
+					writes.emplace_back(VkWriteDescriptorSet{
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = workspace.World_descriptors,
+						.dstBinding = 0,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+						.pBufferInfo = &World_info,
+					});
+				};
+			}
+			writes.emplace_back(VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Scene_world_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pBufferInfo = &Scene_world_info,
+			});
 
 			vkUpdateDescriptorSets(
 				rtg.device,				 // device
@@ -327,81 +344,82 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 			);
 		}
 	}
+	if (!rtg.configuration.headless)
+	{
+		{ // create object vertices
+			std::vector<PosNorTexVertex> vertices;
 
-	{ // create object vertices
-		std::vector<PosNorTexVertex> vertices;
+			{ // A torus:
+				torus_vertices.first = uint32_t(vertices.size());
 
-		{ // A torus:
-			torus_vertices.first = uint32_t(vertices.size());
+				// will parameterize with (u,v) where:
+				//  - u is angle around main axis (+z)
+				//  - v is angle around the tube
 
-			// will parameterize with (u,v) where:
-			//  - u is angle around main axis (+z)
-			//  - v is angle around the tube
+				constexpr float R1 = 0.7f;	// main radius
+				constexpr float R2 = 0.05f; // tube radius
 
-			constexpr float R1 = 0.7f;	// main radius
-			constexpr float R2 = 0.05f; // tube radius
+				constexpr uint32_t U_STEPS = 50;
+				constexpr uint32_t V_STEPS = 40;
 
-			constexpr uint32_t U_STEPS = 50;
-			constexpr uint32_t V_STEPS = 40;
+				// texture repeats around the torus:
+				constexpr float V_REPEATS = 1.0f;
+				float U_REPEATS = std::ceil(V_REPEATS / R2 * R1);
 
-			// texture repeats around the torus:
-			constexpr float V_REPEATS = 1.0f;
-			float U_REPEATS = std::ceil(V_REPEATS / R2 * R1);
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi)
-			{
-				// convert steps to angles:
-				//  (doing the mod since trig on 2 M_PI may not exactly match 0)
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.0f * float(M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * 2.0f * float(M_PI);
-
-				vertices.emplace_back(PosNorTexVertex{
-					.Position{
-						.x = (R1 + R2 * std::cos(va)) * std::cos(ua),
-						.y = (R1 + R2 * std::cos(va)) * std::sin(ua),
-						.z = R2 * std::sin(va),
-					},
-					.Normal{
-						.x = std::cos(va) * std::cos(ua),
-						.y = std::cos(va) * std::sin(ua),
-						.z = std::sin(va),
-					},
-					.TexCoord{
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui)
-			{
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi)
+				auto emplace_vertex = [&](uint32_t ui, uint32_t vi)
 				{
-					emplace_vertex(ui, vi);
-					emplace_vertex(ui + 1, vi);
-					emplace_vertex(ui, vi + 1);
+					// convert steps to angles:
+					//  (doing the mod since trig on 2 M_PI may not exactly match 0)
+					float ua = (ui % U_STEPS) / float(U_STEPS) * 2.0f * float(M_PI);
+					float va = (vi % V_STEPS) / float(V_STEPS) * 2.0f * float(M_PI);
 
-					emplace_vertex(ui, vi + 1);
-					emplace_vertex(ui + 1, vi);
-					emplace_vertex(ui + 1, vi + 1);
+					vertices.emplace_back(PosNorTexVertex{
+						.Position{
+							.x = (R1 + R2 * std::cos(va)) * std::cos(ua),
+							.y = (R1 + R2 * std::cos(va)) * std::sin(ua),
+							.z = R2 * std::sin(va),
+						},
+						.Normal{
+							.x = std::cos(va) * std::cos(ua),
+							.y = std::cos(va) * std::sin(ua),
+							.z = std::sin(va),
+						},
+						.TexCoord{
+							.s = ui / float(U_STEPS) * U_REPEATS,
+							.t = vi / float(V_STEPS) * V_REPEATS,
+						},
+					});
+				};
+
+				for (uint32_t ui = 0; ui < U_STEPS; ++ui)
+				{
+					for (uint32_t vi = 0; vi < V_STEPS; ++vi)
+					{
+						emplace_vertex(ui, vi);
+						emplace_vertex(ui + 1, vi);
+						emplace_vertex(ui, vi + 1);
+
+						emplace_vertex(ui, vi + 1);
+						emplace_vertex(ui + 1, vi);
+						emplace_vertex(ui + 1, vi + 1);
+					}
 				}
+
+				torus_vertices.count = uint32_t(vertices.size()) - torus_vertices.first;
 			}
 
-			torus_vertices.count = uint32_t(vertices.size()) - torus_vertices.first;
+			size_t bytes = vertices.size() * sizeof(vertices[0]);
+
+			object_vertices = rtg.helpers.create_buffer(
+				bytes,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped);
+
+			// copy data to buffer:
+			// rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 		}
-
-		size_t bytes = vertices.size() * sizeof(vertices[0]);
-
-		object_vertices = rtg.helpers.create_buffer(
-			bytes,
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			Helpers::Unmapped);
-
-		// copy data to buffer:
-		// rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
-
 	{
 		// create scene object vertices
 		std::vector<SceneVertex> vertices;
@@ -565,13 +583,12 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	}
 
 	{ // allocate and write the texture descriptor sets
-
 		// allocate the descriptors (using the same alloc_info):
 		VkDescriptorSetAllocateInfo alloc_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = texture_descriptor_pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set2_TEXTURE,
+			.pSetLayouts = &scenes_pipeline.set2_TEXTURE,
 		};
 		texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
 		for (VkDescriptorSet &descriptor_set : texture_descriptors)
@@ -605,6 +622,19 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 	}
+	// else
+	// {
+	// 	size_t bytes = headless_pipeline.computeInput.size() * sizeof(uint32_t);
+
+	// 	headless_resource = rtg.helpers.create_buffer(
+	// 		bytes,
+	// 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	// 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	// 		Helpers::Unmapped);
+
+	// 	// copy data to buffer:
+	// 	rtg.helpers.transfer_to_buffer(headless_pipeline.computeInput.data(), bytes, headless_resource);
+	// }
 
 	start = std::chrono::high_resolution_clock::now();
 	end = std::chrono::high_resolution_clock::now();
@@ -833,20 +863,40 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 	end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = (end - start) * 1000;
 	start = end;
-	// std::cout << "REPORT " << elapsed.count() << " ms" << std::endl;
+	// std::cout << "render  REPORT " << elapsed.count() << " ms" << std::endl;
 
 	// assert that parameters are valid:
 	assert(&rtg == &rtg_);
 	assert(render_params.workspace_index < workspaces.size());
-	assert(render_params.image_index < swapchain_framebuffers.size());
+	if (!rtg.configuration.headless)
+	{
+		assert(render_params.image_index < swapchain_framebuffers.size());
+	}
 
 	// get more convenient names for the current workspace and target framebuffer:
 	Workspace &workspace = workspaces[render_params.workspace_index];
-	[[maybe_unused]] VkFramebuffer framebuffer = swapchain_framebuffers[render_params.image_index];
+	[[maybe_unused]] VkFramebuffer framebuffer = nullptr;
+
+	if (!rtg.configuration.headless)
+		framebuffer = swapchain_framebuffers[render_params.image_index];
+	else
+	{
+		// TODO : set up the correct image
+		VkFramebufferCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = render_pass,
+			.attachmentCount = 2,
+			.pAttachments = texture_views.data(),
+			.width = textures[0].extent.width,
+			.height = textures[0].extent.height,
+			.layers = 1,
+		};
+		assert(texture_views.size() >= 2);
+		VK(vkCreateFramebuffer(rtg.device, &create_info, nullptr, &framebuffer));
+	}
 
 	// record (into `workspace.command_buffer`) commands that run a `render_pass` that just clears `framebuffer`:
 	// refsol::Tutorial_render_record_blank_frame(rtg, render_pass, framebuffer, &workspace.command_buffer);
-
 	// reset the command buffer (clear old commands):
 	VK(vkResetCommandBuffer(workspace.command_buffer, 0));
 
@@ -859,188 +909,190 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		VK(vkBeginCommandBuffer(workspace.command_buffer, &begin_info));
 	}
 
-	if (!lines_vertices.empty())
-	{ // upload lines vertices:
-		//[re-]allocate lines buffers if needed:
-		size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
-		if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes)
-		{
-			// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
-			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
-
-			if (workspace.lines_vertices_src.handle)
+	if (!rtg.configuration.headless)
+	{
+		if (!lines_vertices.empty())
+		{ // upload lines vertices:
+			//[re-]allocate lines buffers if needed:
+			size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
+			if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes)
 			{
-				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
-			}
-			if (workspace.lines_vertices.handle)
-			{
-				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
-			}
+				// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
+				size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
 
-			workspace.lines_vertices_src = rtg.helpers.create_buffer(
-				new_bytes,
-				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
-				Helpers::Mapped																// get a pointer to the memory
-			);
-			workspace.lines_vertices = rtg.helpers.create_buffer(
-				new_bytes,
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								  // GPU-local memory
-				Helpers::Unmapped													  // don't get a pointer to the memory
-			);
+				if (workspace.lines_vertices_src.handle)
+				{
+					rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
+				}
+				if (workspace.lines_vertices.handle)
+				{
+					rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
+				}
 
-			std::cout << render_params.workspace_index
-					  << ": Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
-		}
+				workspace.lines_vertices_src = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+					Helpers::Mapped																// get a pointer to the memory
+				);
+				workspace.lines_vertices = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								  // GPU-local memory
+					Helpers::Unmapped													  // don't get a pointer to the memory
+				);
 
-		assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
-		assert(workspace.lines_vertices_src.size >= needed_bytes);
-
-		// host-side copy into lines_vertices_src:
-		assert(workspace.lines_vertices_src.allocation.mapped);
-		std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
-
-		// device-side copy from lines_vertices_src -> lines_vertices:
-		VkBufferCopy copy_region{
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = needed_bytes,
-		};
-		vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
-	}
-
-	{ // upload camera info:
-		LinesPipeline::Camera camera{
-			.CLIP_FROM_WORLD = CLIP_FROM_WORLD};
-		assert(workspace.Camera_src.size == sizeof(camera));
-
-		// host-side copy into Camera_src:
-		memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
-
-		// add device-side copy from Camera_src -> Camera:
-		assert(workspace.Camera_src.size == workspace.Camera.size);
-		VkBufferCopy copy_region{
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = workspace.Camera_src.size,
-		};
-		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
-	}
-
-	{ // upload world info:
-		assert(workspace.Camera_src.size == sizeof(world));
-
-		// host-side copy into World_src:
-		memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
-
-		// add device-side copy from World_src -> World:
-		assert(workspace.World_src.size == workspace.World.size);
-		VkBufferCopy copy_region{
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = workspace.World_src.size,
-		};
-		vkCmdCopyBuffer(workspace.command_buffer, workspace.World_src.handle, workspace.World.handle, 1, &copy_region);
-	}
-
-	{ // upload scene world info:
-		assert(workspace.Scene_world_src.size == sizeof(world));
-
-		// host-side copy into World_src:
-		memcpy(workspace.Scene_world_src.allocation.data(), &world, sizeof(world));
-
-		// add device-side copy from World_src -> World:
-		assert(workspace.Scene_world_src.size == workspace.Scene_world.size);
-		VkBufferCopy copy_region{
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = workspace.Scene_world_src.size,
-		};
-		vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_world_src.handle, workspace.Scene_world.handle, 1, &copy_region);
-	}
-
-	if (!object_instances.empty())
-	{ // upload object transforms:
-		//[re-]allocate lines buffers if needed:
-		size_t needed_bytes = object_instances.size() * sizeof(ObjectsPipeline::Transform);
-		if (workspace.Transforms_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes)
-		{
-			// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
-			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
-
-			if (workspace.Transforms_src.handle)
-			{
-				rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
-			}
-			if (workspace.Transforms.handle)
-			{
-				rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+				std::cout << render_params.workspace_index
+						  << ": Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
 			}
 
-			workspace.Transforms_src = rtg.helpers.create_buffer(
-				new_bytes,
-				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
-				Helpers::Mapped																// get a pointer to the memory
-			);
-			workspace.Transforms = rtg.helpers.create_buffer(
-				new_bytes,
-				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
-				Helpers::Unmapped													   // don't get a pointer to the memory
-			);
+			assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
+			assert(workspace.lines_vertices_src.size >= needed_bytes);
 
-			// update the descriptor set:
-			VkDescriptorBufferInfo Transforms_info{
-				.buffer = workspace.Transforms.handle,
-				.offset = 0,
-				.range = workspace.Transforms.size,
+			// host-side copy into lines_vertices_src:
+			assert(workspace.lines_vertices_src.allocation.mapped);
+			std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
+
+			// device-side copy from lines_vertices_src -> lines_vertices:
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = needed_bytes,
 			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
+		}
 
-			std::array<VkWriteDescriptorSet, 1> writes{
-				VkWriteDescriptorSet{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = workspace.Transforms_descriptors,
-					.dstBinding = 0,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-					.pBufferInfo = &Transforms_info,
-				},
+		{ // upload camera info:
+			LinesPipeline::Camera camera{
+				.CLIP_FROM_WORLD = CLIP_FROM_WORLD};
+			assert(workspace.Camera_src.size == sizeof(camera));
+
+			// host-side copy into Camera_src:
+			memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
+
+			// add device-side copy from Camera_src -> Camera:
+			assert(workspace.Camera_src.size == workspace.Camera.size);
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = workspace.Camera_src.size,
 			};
-
-			vkUpdateDescriptorSets(
-				rtg.device,
-				uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
-				0, nullptr								// descriptorCopies count, data
-			);
-
-			std::cout << "Re-allocated object transforms buffers to " << new_bytes << " bytes." << std::endl;
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
 		}
 
-		assert(workspace.Transforms_src.size == workspace.Transforms.size);
-		assert(workspace.Transforms_src.size >= needed_bytes);
+		{ // upload world info:
+			assert(workspace.Camera_src.size == sizeof(world));
 
-		{ // copy transforms into Transforms_src:
-			assert(workspace.Transforms_src.allocation.mapped);
-			ObjectsPipeline::Transform *out = reinterpret_cast<ObjectsPipeline::Transform *>(workspace.Transforms_src.allocation.data()); // Strict aliasing violation, but it doesn't matter
-			for (ObjectInstance const &inst : object_instances)
+			// host-side copy into World_src:
+			memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
+
+			// add device-side copy from World_src -> World:
+			assert(workspace.World_src.size == workspace.World.size);
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = workspace.World_src.size,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.World_src.handle, workspace.World.handle, 1, &copy_region);
+		}
+
+		{ // upload scene world info:
+			assert(workspace.Scene_world_src.size == sizeof(world));
+
+			// host-side copy into World_src:
+			memcpy(workspace.Scene_world_src.allocation.data(), &world, sizeof(world));
+
+			// add device-side copy from World_src -> World:
+			assert(workspace.Scene_world_src.size == workspace.Scene_world.size);
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = workspace.Scene_world_src.size,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_world_src.handle, workspace.Scene_world.handle, 1, &copy_region);
+		}
+
+		if (!object_instances.empty())
+		{ // upload object transforms:
+			//[re-]allocate lines buffers if needed:
+			size_t needed_bytes = object_instances.size() * sizeof(ObjectsPipeline::Transform);
+			if (workspace.Transforms_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes)
 			{
-				*out = inst.transform;
-				++out;
+				// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
+				size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+
+				if (workspace.Transforms_src.handle)
+				{
+					rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
+				}
+				if (workspace.Transforms.handle)
+				{
+					rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+				}
+
+				workspace.Transforms_src = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+					Helpers::Mapped																// get a pointer to the memory
+				);
+				workspace.Transforms = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
+					Helpers::Unmapped													   // don't get a pointer to the memory
+				);
+
+				// update the descriptor set:
+				VkDescriptorBufferInfo Transforms_info{
+					.buffer = workspace.Transforms.handle,
+					.offset = 0,
+					.range = workspace.Transforms.size,
+				};
+
+				std::array<VkWriteDescriptorSet, 1> writes{
+					VkWriteDescriptorSet{
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = workspace.Transforms_descriptors,
+						.dstBinding = 0,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.pBufferInfo = &Transforms_info,
+					},
+				};
+
+				vkUpdateDescriptorSets(
+					rtg.device,
+					uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
+					0, nullptr								// descriptorCopies count, data
+				);
+
+				std::cout << "Re-allocated object transforms buffers to " << new_bytes << " bytes." << std::endl;
 			}
+
+			assert(workspace.Transforms_src.size == workspace.Transforms.size);
+			assert(workspace.Transforms_src.size >= needed_bytes);
+
+			{ // copy transforms into Transforms_src:
+				assert(workspace.Transforms_src.allocation.mapped);
+				ObjectsPipeline::Transform *out = reinterpret_cast<ObjectsPipeline::Transform *>(workspace.Transforms_src.allocation.data()); // Strict aliasing violation, but it doesn't matter
+				for (ObjectInstance const &inst : object_instances)
+				{
+					*out = inst.transform;
+					++out;
+				}
+			}
+
+			// device-side copy from lines_vertices_src -> lines_vertices:
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = needed_bytes,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 		}
-
-		// device-side copy from lines_vertices_src -> lines_vertices:
-		VkBufferCopy copy_region{
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = needed_bytes,
-		};
-		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
-
 	if (!scene_instances.empty())
 	{ // upload scene transforms:
 		//[re-]allocate lines buffers if needed:
@@ -1160,28 +1212,29 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 		vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 
-		// run pipelines here
 		{
-			// set scissor rectangle:
-			VkRect2D scissor{
-				.offset = {.x = 0, .y = 0},
-				.extent = rtg.swapchain_extent,
-			};
-			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			// run pipelines here
+			{
+				// set scissor rectangle:
+				VkRect2D scissor{
+					.offset = {.x = 0, .y = 0},
+					.extent = rtg.swapchain_extent,
+				};
+				vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			}
+			{
+				// configure viewport transform
+				VkViewport viewport{
+					.x = 0.0f,
+					.y = 0.0f,
+					.width = float(rtg.swapchain_extent.width),
+					.height = float(rtg.swapchain_extent.height),
+					.minDepth = 0.0f,
+					.maxDepth = 1.0f,
+				};
+				vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+			}
 		}
-		{
-			// configure viewport transform
-			VkViewport viewport{
-				.x = 0.0f,
-				.y = 0.0f,
-				.width = float(rtg.swapchain_extent.width),
-				.height = float(rtg.swapchain_extent.height),
-				.minDepth = 0.0f,
-				.maxDepth = 1.0f,
-			};
-			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
-		}
-
 		// {
 		// 	// draw with the background pipeline:
 		// 	vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);
@@ -1306,8 +1359,6 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 			{
 				uint32_t index = uint32_t(&inst - &scene_instances[0]);
 
-				// no texture at present stage
-
 				// bind texture descriptor set:
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer,			   // command buffer
@@ -1354,6 +1405,14 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 void Tutorial::update(float dt)
 {
+	if (rtg.configuration.headless)
+	{
+		end = std::chrono::high_resolution_clock::now();
+		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end.time_since_epoch());
+		std::cout << "call update " << duration.count() << "ms\n";
+		// return;
+	}
+
 	time = std::fmod(playmode.time + dt, s72_scene.animation_duration);
 
 	{ // camera orbiting the origin:
@@ -1409,160 +1468,163 @@ void Tutorial::update(float dt)
 		world.SUN_ENERGY.b = intensity * 0.3f;
 	}
 
-	{ // make some crossing lines at different depths:
-		lines_vertices.clear();
-		constexpr size_t count = 2 * 30 + 2 * 30;
-		lines_vertices.reserve(count);
-		// horizontal lines at z = 0.5f:
-		for (uint32_t i = 0; i < 30; ++i)
-		{
-			float y_base = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
-			float z = (i + 0.5f) / 30.0f;
-			float y_offset = std::sin(time + z * 3.14159f * 2.0f) * 0.2f; // Adjust the amplitude and frequency as needed
-
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -1.0f, .y = y_base + y_offset, .z = 0.5f},
-				.Color{.r = 0x1f, .g = 0xff, .b = 0x00, .a = 0xff},
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = 1.0f, .y = y_base - y_offset, .z = 0.5f},
-				.Color{.r = 0x1f, .g = 0x0f, .b = 0xf0, .a = 0xff},
-			});
-		}
-		// vertical lines at z = 0.0f (near) through 1.0f (far):
-		for (uint32_t i = 0; i < 30; ++i)
-		{
-			float x_base = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
-			float z = (i + 0.5f) / 30.0f;
-			float x_offset = std::sin(time + z * 3.14159f * 2.0f) * 0.2f; // Adjust the amplitude and frequency as needed
-
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x_base + x_offset, .y = -1.0f, .z = z},
-				.Color{.r = 0x04, .g = 0x00, .b = 0x0f, .a = 0xff},
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x_base - x_offset, .y = 1.0f, .z = z},
-				.Color{.r = 0x04, .g = 0x00, .b = 0xff, .a = 0xff},
-			});
-		}
-		assert(lines_vertices.size() == count);
-	}
-
+	if (!rtg.configuration.headless)
 	{
-		lines_vertices.clear();
-		constexpr size_t count = 2 * 30 * 30; // Number of lines (latitude * longitude)
-		lines_vertices.reserve(count);
-
-		// Constants for the sphere
-		const float radius = 1.0f;
-		float e = 1.0f + 0.5f * std::sin(time);
-		const size_t num_latitude_lines = 30;
-		const size_t num_longitude_lines = 30;
-
-		// Latitude lines (parallel to the equator)
-		for (uint32_t lat = 0; lat < num_latitude_lines; ++lat)
-		{
-			float theta = (lat + 0.5f) / num_latitude_lines * 3.14159f; // From 0 to Pi (180 degrees)
-			for (uint32_t lon = 0; lon < num_longitude_lines; ++lon)
+		{ // make some crossing lines at different depths:
+			lines_vertices.clear();
+			constexpr size_t count = 2 * 30 + 2 * 30;
+			lines_vertices.reserve(count);
+			// horizontal lines at z = 0.5f:
+			for (uint32_t i = 0; i < 30; ++i)
 			{
-				float phi = lon / (float)num_longitude_lines * 2.0f * 3.14159f; // From 0 to 2*Pi (360 degrees)
-
-				float x = radius * std::sin(theta) * std::cos(phi);
-				float y = radius * std::sin(theta) * std::sin(phi);
-				float z = radius * std::cos(theta) / e; // Adjust z for ellipsoid
-
-				float x_next = radius * std::sin(theta) * std::cos(phi + 2.0f * 3.14159f / num_longitude_lines);
-				float y_next = radius * std::sin(theta) * std::sin(phi + 2.0f * 3.14159f / num_longitude_lines);
+				float y_base = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
+				float z = (i + 0.5f) / 30.0f;
+				float y_offset = std::sin(time + z * 3.14159f * 2.0f) * 0.2f; // Adjust the amplitude and frequency as needed
 
 				lines_vertices.emplace_back(PosColVertex{
-					.Position{.x = x, .y = y, .z = z},
+					.Position{.x = -1.0f, .y = y_base + y_offset, .z = 0.5f},
 					.Color{.r = 0x1f, .g = 0xff, .b = 0x00, .a = 0xff},
 				});
 				lines_vertices.emplace_back(PosColVertex{
-					.Position{.x = x_next, .y = y_next, .z = z},
-					.Color{.r = 0x1f, .g = 0xff, .b = 0x00, .a = 0xff},
+					.Position{.x = 1.0f, .y = y_base - y_offset, .z = 0.5f},
+					.Color{.r = 0x1f, .g = 0x0f, .b = 0xf0, .a = 0xff},
 				});
 			}
+			// vertical lines at z = 0.0f (near) through 1.0f (far):
+			for (uint32_t i = 0; i < 30; ++i)
+			{
+				float x_base = (i + 0.5f) / 30.0f * 2.0f - 1.0f;
+				float z = (i + 0.5f) / 30.0f;
+				float x_offset = std::sin(time + z * 3.14159f * 2.0f) * 0.2f; // Adjust the amplitude and frequency as needed
+
+				lines_vertices.emplace_back(PosColVertex{
+					.Position{.x = x_base + x_offset, .y = -1.0f, .z = z},
+					.Color{.r = 0x04, .g = 0x00, .b = 0x0f, .a = 0xff},
+				});
+				lines_vertices.emplace_back(PosColVertex{
+					.Position{.x = x_base - x_offset, .y = 1.0f, .z = z},
+					.Color{.r = 0x04, .g = 0x00, .b = 0xff, .a = 0xff},
+				});
+			}
+			assert(lines_vertices.size() == count);
 		}
 
-		// Longitude lines (from pole to pole)
-		for (uint32_t lon = 0; lon < num_longitude_lines; ++lon)
 		{
-			float phi = lon / (float)num_longitude_lines * 2.0f * 3.14159f; // From 0 to 2*Pi (360 degrees)
+			lines_vertices.clear();
+			constexpr size_t count = 2 * 30 * 30; // Number of lines (latitude * longitude)
+			lines_vertices.reserve(count);
+
+			// Constants for the sphere
+			const float radius = 1.0f;
+			float e = 1.0f + 0.5f * std::sin(time);
+			const size_t num_latitude_lines = 30;
+			const size_t num_longitude_lines = 30;
+
+			// Latitude lines (parallel to the equator)
 			for (uint32_t lat = 0; lat < num_latitude_lines; ++lat)
 			{
 				float theta = (lat + 0.5f) / num_latitude_lines * 3.14159f; // From 0 to Pi (180 degrees)
+				for (uint32_t lon = 0; lon < num_longitude_lines; ++lon)
+				{
+					float phi = lon / (float)num_longitude_lines * 2.0f * 3.14159f; // From 0 to 2*Pi (360 degrees)
 
-				float x = radius * std::sin(theta) * std::cos(phi);
-				float y = radius * std::sin(theta) * std::sin(phi);
-				float z = radius * std::cos(theta) / e; // Adjust z for ellipsoid
+					float x = radius * std::sin(theta) * std::cos(phi);
+					float y = radius * std::sin(theta) * std::sin(phi);
+					float z = radius * std::cos(theta) / e; // Adjust z for ellipsoid
 
-				float z_next = radius * std::cos(theta + 3.14159f / num_latitude_lines) / e;
+					float x_next = radius * std::sin(theta) * std::cos(phi + 2.0f * 3.14159f / num_longitude_lines);
+					float y_next = radius * std::sin(theta) * std::sin(phi + 2.0f * 3.14159f / num_longitude_lines);
 
-				lines_vertices.emplace_back(PosColVertex{
-					.Position{.x = x, .y = y, .z = z},
-					.Color{.r = 0xf4, .g = 0xf0, .b = 0xff, .a = 0xff},
-				});
-				lines_vertices.emplace_back(PosColVertex{
-					.Position{.x = radius * std::sin(theta + 3.14159f / num_latitude_lines) * std::cos(phi),
-							  .y = radius * std::sin(theta + 3.14159f / num_latitude_lines) * std::sin(phi),
-							  .z = z_next},
-					.Color{.r = 0x04, .g = 0x80, .b = 0x7f, .a = 0xff},
-				});
+					lines_vertices.emplace_back(PosColVertex{
+						.Position{.x = x, .y = y, .z = z},
+						.Color{.r = 0x1f, .g = 0xff, .b = 0x00, .a = 0xff},
+					});
+					lines_vertices.emplace_back(PosColVertex{
+						.Position{.x = x_next, .y = y_next, .z = z},
+						.Color{.r = 0x1f, .g = 0xff, .b = 0x00, .a = 0xff},
+					});
+				}
 			}
+
+			// Longitude lines (from pole to pole)
+			for (uint32_t lon = 0; lon < num_longitude_lines; ++lon)
+			{
+				float phi = lon / (float)num_longitude_lines * 2.0f * 3.14159f; // From 0 to 2*Pi (360 degrees)
+				for (uint32_t lat = 0; lat < num_latitude_lines; ++lat)
+				{
+					float theta = (lat + 0.5f) / num_latitude_lines * 3.14159f; // From 0 to Pi (180 degrees)
+
+					float x = radius * std::sin(theta) * std::cos(phi);
+					float y = radius * std::sin(theta) * std::sin(phi);
+					float z = radius * std::cos(theta) / e; // Adjust z for ellipsoid
+
+					float z_next = radius * std::cos(theta + 3.14159f / num_latitude_lines) / e;
+
+					lines_vertices.emplace_back(PosColVertex{
+						.Position{.x = x, .y = y, .z = z},
+						.Color{.r = 0xf4, .g = 0xf0, .b = 0xff, .a = 0xff},
+					});
+					lines_vertices.emplace_back(PosColVertex{
+						.Position{.x = radius * std::sin(theta + 3.14159f / num_latitude_lines) * std::cos(phi),
+								  .y = radius * std::sin(theta + 3.14159f / num_latitude_lines) * std::sin(phi),
+								  .z = z_next},
+						.Color{.r = 0x04, .g = 0x80, .b = 0x7f, .a = 0xff},
+					});
+				}
+			}
+
+			// assert(lines_vertices.size() == count);
 		}
 
-		// assert(lines_vertices.size() == count);
-	}
+		{ // make some objects:
+			object_instances.clear();
 
-	{ // make some objects:
-		object_instances.clear();
+			{ // torus translated -x by one unit and rotated CCW around +y:
+				float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
+				float ca = std::cos(ang);
+				float sa = std::sin(ang);
+				mat4 WORLD_FROM_LOCAL{
+					ca,
+					0.0f,
+					-sa,
+					0.0f,
+					0.0f,
+					1.0f,
+					0.0f,
+					0.0f,
+					sa,
+					0.0f,
+					ca,
+					0.0f,
+					0.0f,
+					0.0f,
+					0.0f,
+					1.0f};
 
-		{ // torus translated -x by one unit and rotated CCW around +y:
-			float ang = time / 60.0f * 2.0f * float(M_PI) * 10.0f;
-			float ca = std::cos(ang);
-			float sa = std::sin(ang);
-			mat4 WORLD_FROM_LOCAL{
-				ca,
-				0.0f,
-				-sa,
-				0.0f,
-				0.0f,
-				1.0f,
-				0.0f,
-				0.0f,
-				sa,
-				0.0f,
-				ca,
-				0.0f,
-				0.0f,
-				0.0f,
-				0.0f,
-				1.0f};
+				// Create rotation matrix for the x-axis
+				float angle_x = time / 60.0f * 2.0f * float(M_PI) * 10.0f; // Adjust time to control the speed of rotation
+				float cx = std::cos(angle_x);
+				float sx = std::sin(angle_x);
 
-			// Create rotation matrix for the x-axis
-			float angle_x = time / 60.0f * 2.0f * float(M_PI) * 10.0f; // Adjust time to control the speed of rotation
-			float cx = std::cos(angle_x);
-			float sx = std::sin(angle_x);
+				mat4 ROTATE_X{
+					1.0f, 0.0f, 0.0f, 0.0f,
+					0.0f, cx, -sx, 0.0f,
+					0.0f, sx, cx, 0.0f,
+					0.0f, 0.0f, 0.0f, 1.0f};
 
-			mat4 ROTATE_X{
-				1.0f, 0.0f, 0.0f, 0.0f,
-				0.0f, cx, -sx, 0.0f,
-				0.0f, sx, cx, 0.0f,
-				0.0f, 0.0f, 0.0f, 1.0f};
+				// Combine the rotations (apply in the desired order)
+				mat4 WORLD_FROM_LOCAL_0 = ROTATE_X * WORLD_FROM_LOCAL; // Rotation about X-axis
 
-			// Combine the rotations (apply in the desired order)
-			mat4 WORLD_FROM_LOCAL_0 = ROTATE_X * WORLD_FROM_LOCAL; // Rotation about X-axis
-
-			// object_instances.emplace_back(ObjectInstance{
-			// 	.vertices = torus_vertices,
-			// 	.transform{
-			// 		.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_0,
-			// 		.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_0,
-			// 		.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_0,
-			// 	},
-			// 	.texture = 2,
-			// });
+				// object_instances.emplace_back(ObjectInstance{
+				// 	.vertices = torus_vertices,
+				// 	.transform{
+				// 		.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL_0,
+				// 		.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL_0,
+				// 		.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL_0,
+				// 	},
+				// 	.texture = 2,
+				// });
+			}
 		}
 	}
 
@@ -1895,7 +1957,12 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 void Tutorial::load_s72()
 {
 	std::cout << std::filesystem::current_path() << "  load s72 file: ";
-	const std::string s72_file = "./resource/" + rtg.configuration.scene_name;
+	std::string s72_file;
+	s72_file = "./resource/" + rtg.configuration.scene_name;
+	if (rtg.configuration.headless)
+	{
+		s72_file = "./resource/sphereflake.s72"; // set default
+	}
 	std::cout << s72_file;
 	sejp::value val = sejp::load(s72_file);
 	scene_workflow(val);
