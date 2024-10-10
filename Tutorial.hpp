@@ -284,6 +284,7 @@ struct Tutorial : RTG::Application
 
 	void load_s72();
 	void set_mesh_vertices_map(std::vector<SceneVertex> &vertices);
+	void set_mesh_material_map();
 	void process_node(std::vector<SceneVertex> &vertices, Node *node);
 	void load_vertex_from_b72(std::vector<SceneVertex> &vertices);
 	//--------------------------------------------------------------------

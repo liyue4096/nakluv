@@ -69,6 +69,13 @@ enum MaterialType
     ENVIRONMENT,
 };
 
+struct Texture
+{
+    std::string src;
+    std::string type;
+    std::string format;
+};
+
 struct MsehVertices
 {
     uint32_t first = 0;
@@ -181,20 +188,48 @@ struct Driver
     void make_animation(float time);
 };
 
-// struct MaterialObject
-// {
-//     std::string name;
-//     std::optional<Texture> normalmap;       // std::nullopt
-//     std::optional<Texture> displacementmap; // std::nullopt
-//     MaterialType type;
-//     std::variant<std::monostate, PBRMaterial, LambertianMaterial> material; // std::monostate
-// };
+using AlbedoParam = std::variant<glm::vec3, Texture>;
+using RoughnessParam = std::variant<float, Texture>;
+using MetalnessParam = std::variant<float, Texture>;
 
-// struct EnvironmentObject
-// {
-//     std::string name;
-//     Texture radiance;
-// };
+struct PBRMaterial
+{
+    AlbedoParam albedo;
+    RoughnessParam roughness;
+    MetalnessParam metalness;
+
+    PBRMaterial() : albedo(glm::vec3(1.0f)),
+                    roughness(0.5f),
+                    metalness(0.5f) {}
+
+    PBRMaterial(glm::vec3 albedo, float roughness, float metalness) : albedo(albedo),
+                                                                      roughness(roughness),
+                                                                      metalness(metalness) {}
+};
+
+struct LambertianMaterial
+{
+    AlbedoParam albedo;
+
+    LambertianMaterial() : albedo(glm::vec3(1.0f)) {}
+
+    LambertianMaterial(glm::vec3 albedo) : albedo(albedo) {}
+};
+
+struct MaterialObject
+{
+    std::string name;
+    std::optional<Texture> normalmap;       // std::nullopt
+    std::optional<Texture> displacementmap; // std::nullopt
+    MaterialType type;
+    std::variant<std::monostate, PBRMaterial, LambertianMaterial> material; // std::monostate
+};
+
+struct Environment
+{
+    std::string name;
+    Texture radiance;
+};
 
 // struct LightObject
 // {
@@ -214,12 +249,15 @@ struct S72_scene
     std::unordered_map<Node *, glm::mat4> transforms;
     std::unordered_map<Mesh *, MsehVertices> mesh_vertices_map;
     std::unordered_map<Mesh *, BBox> mesh_bbox_map;
+    std::unordered_map<Mesh *, MaterialObject *> mesh_material_map;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
+    std::vector<MaterialObject> materials;
     std::vector<Camera> cameras;
     std::vector<Driver> drivers;
     Camera_Mode camera_mode = SCENE;
     Camera *current_camera_;
+    Environment environment; // unique
 };
 
 void get_scene(const std::vector<sejp::value> &array);

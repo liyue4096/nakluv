@@ -23,6 +23,8 @@
 #include "include/sejp/sejp.hpp"
 #include "lib/bbox.h"
 
+#include "include/stb/stb_image.h"
+
 std::chrono::time_point<std::chrono::high_resolution_clock> start, end;
 
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
@@ -440,41 +442,58 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	}
 
 	{ // make some textures
-		textures.reserve(2);
+		set_mesh_material_map();
+		auto texture_size = s72_scene.mesh_material_map.size();
 
+		textures.reserve(texture_size);
+
+		for (auto it_mesh_material = s72_scene.mesh_material_map.begin(); it_mesh_material != s72_scene.mesh_material_map.end(); it_mesh_material++)
 		{ // texture 0 will be a dark grey / light grey checkerboard with a red square at the origin.
 			// actually make the texture:
-			uint32_t size = 128;
-			std::vector<uint32_t> data;
-			data.reserve(size * size);
-			for (uint32_t y = 0; y < size; ++y)
+			int w, h, n, ok;
+			std::string filename = "resource/env-cube.png";
+			[[maybe_unused]] unsigned char *image_data = stbi_load(filename.c_str(), &w, &h, &n, 0);
+			ok = stbi_info(filename.c_str(), &w, &h, &n);
+			std::cout << filename.c_str() << " ok? " << ok << ": " << w << ", " << h << ", " << n << "\n";
+
+			// uint32_t size = 128;
+			// std::vector<uint32_t> data;
+			// data.reserve(size * size);
+			// for (uint32_t y = 0; y < size; ++y)
+			// {
+			// 	float fy = (y + 0.5f) / float(size);
+			// 	for (uint32_t x = 0; x < size; ++x)
+			// 	{
+			// 		float fx = (x + 0.5f) / float(size);
+			// 		// highlight the origin:
+			// 		if (fx < 0.05f && fy < 0.05f)
+			// 			data.emplace_back(0xff0000ff); // red
+			// 		else if ((fx < 0.5f) == (fy < 0.5f))
+			// 			data.emplace_back(0xff444444); // dark grey
+			// 		else
+			// 			data.emplace_back(0xffbbbbbb); // light grey
+			// 	}
+			// }
+			// assert(data.size() == size * size);
+
+			// if (it_mesh_material->second->type == ENVIRONMENT)
 			{
-				float fy = (y + 0.5f) / float(size);
-				for (uint32_t x = 0; x < size; ++x)
-				{
-					float fx = (x + 0.5f) / float(size);
-					// highlight the origin:
-					if (fx < 0.05f && fy < 0.05f)
-						data.emplace_back(0xff0000ff); // red
-					else if ((fx < 0.5f) == (fy < 0.5f))
-						data.emplace_back(0xff444444); // dark grey
-					else
-						data.emplace_back(0xffbbbbbb); // light grey
-				}
 			}
-			assert(data.size() == size * size);
-
-			// make a place for the texture to live on the GPU:
-			textures.emplace_back(rtg.helpers.create_image(
-				VkExtent2D{.width = size, .height = size}, // size of image
-				VK_FORMAT_R8G8B8A8_UNORM,				   // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
-				VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
-				Helpers::Unmapped));
-
+			// else
+			{ // make a place for the texture to live on the GPU:
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)h}, // size of image
+					VK_FORMAT_R8G8B8A8_UNORM,								 // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+					Helpers::Unmapped));
+			}
 			// transfer data:
-			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			// rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			rtg.helpers.transfer_to_image(image_data, w * h * n, textures.back());
+
+			stbi_image_free(image_data);
 		}
 
 		{ // texture 1 will be a classic 'xor' texture:
@@ -622,19 +641,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 	}
-	// else
-	// {
-	// 	size_t bytes = headless_pipeline.computeInput.size() * sizeof(uint32_t);
-
-	// 	headless_resource = rtg.helpers.create_buffer(
-	// 		bytes,
-	// 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-	// 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	// 		Helpers::Unmapped);
-
-	// 	// copy data to buffer:
-	// 	rtg.helpers.transfer_to_buffer(headless_pipeline.computeInput.data(), bytes, headless_resource);
-	// }
 
 	start = std::chrono::high_resolution_clock::now();
 	end = std::chrono::high_resolution_clock::now();
@@ -2046,6 +2052,23 @@ void Tutorial::set_mesh_vertices_map(std::vector<SceneVertex> &vertices)
 		//		  << vertices.back().Position.y << ", " << vertices.back().Position.z << "\n";
 
 		file.close();
+	}
+}
+
+void Tutorial::set_mesh_material_map()
+{
+	for (auto &mesh : s72_scene.meshes)
+	{
+		if (mesh.material != "")
+		{
+			for (auto &meterial_obj : s72_scene.materials)
+			{
+				if (meterial_obj.name == mesh.material)
+				{
+					s72_scene.mesh_material_map[&mesh] = &meterial_obj;
+				}
+			}
+		}
 	}
 }
 

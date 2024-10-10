@@ -1,5 +1,8 @@
 #include "Helpers.hpp"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "../include/stb/stb_image.h"
+
 #include "../RTG.hpp"
 #include "VK.hpp"
 

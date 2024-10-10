@@ -363,7 +363,6 @@ void get_scene(const std::vector<sejp::value> &array)
                                     }
                                     // std::cout << frame.value[j] << ",";
                                 }
-
                                 // std::cout << "    ";
 
                                 driver.frames.push_back(frame);
@@ -402,7 +401,190 @@ void get_scene(const std::vector<sejp::value> &array)
                 // Add the parsed driver to the drivers vector
                 s72_scene.drivers.push_back(driver);
             }
+            // parse msg to MATERIAL
+            else if (type_opt->second.as_string().value() == "MATERIAL")
+            {
+                MaterialObject material;
+
+                // Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    material.name = name_opt->second.as_string().value();
+                }
+
+                // Get "normalMap" field
+                if (auto normalmap_opt = obj.find("normalMap"); normalmap_opt != obj.end() && normalmap_opt->second.as_object())
+                {
+                    auto &normalmap_obj = normalmap_opt->second.as_object().value();
+
+                    if (auto src_opt = normalmap_obj.find("src"); src_opt != normalmap_obj.end() && src_opt->second.as_string())
+                    {
+                        material.normalmap = Texture{src_opt->second.as_string().value()};
+                    }
+                }
+
+                // Get "displacementMap" field
+                if (auto displacementmap_opt = obj.find("displacementMap"); displacementmap_opt != obj.end() && displacementmap_opt->second.as_object())
+                {
+                    auto &isplacementmap_obj = displacementmap_opt->second.as_object().value();
+                    if (auto src_opt = isplacementmap_obj.find("src"); src_opt != isplacementmap_obj.end() && src_opt->second.as_string())
+                    {
+                        material.displacementmap = Texture{src_opt->second.as_string().value()};
+                    }
+                }
+
+                // Parse material type (PBR, Lambertian, Mirror, Environment)
+                if (auto pbr_opt = obj.find("pbr"); pbr_opt != obj.end() && pbr_opt->second.as_object())
+                {
+                    material.type = MaterialType::PBR;
+                    PBRMaterial pbrMaterial;
+
+                    const auto &pbr_obj = pbr_opt->second.as_object().value();
+                    // Parse "albedo" field
+                    if (auto albedo_opt = pbr_obj.find("albedo"); albedo_opt != pbr_obj.end())
+                    {
+                        const auto &albedo_obj = albedo_opt->second;
+                        if (albedo_obj.as_array())
+                        {
+                            auto &albedoArray = albedo_obj.as_array().value();
+                            if (albedoArray.size() == 3 && albedoArray[0].as_number() && albedoArray[1].as_number() && albedoArray[2].as_number())
+                            {
+                                pbrMaterial.albedo = glm::vec3(
+                                    albedoArray[0].as_number().value(),
+                                    albedoArray[1].as_number().value(),
+                                    albedoArray[2].as_number().value());
+                            }
+                        }
+                        else if (albedo_opt->second.as_object())
+                        {
+                            const auto &albedo_obj_val = albedo_obj.as_object().value();
+                            if (auto src_opt = albedo_obj_val.find("src"); src_opt != albedo_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.albedo = Texture{src_opt->second.as_string().value()};
+                            }
+                        }
+                    }
+
+                    // Parse "roughness" field
+                    if (auto roughness_opt = pbr_obj.find("roughness"); roughness_opt != pbr_obj.end())
+                    {
+                        const auto &roughness_obj = roughness_opt->second;
+                        if (roughness_obj.as_number())
+                        {
+                            pbrMaterial.roughness = (float)roughness_obj.as_number().value();
+                        }
+                        else if (roughness_obj.as_object())
+                        {
+                            const auto &roughness_obj_val = roughness_obj.as_object().value();
+                            if (auto src_opt = roughness_obj_val.find("src"); src_opt != roughness_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.roughness = Texture{src_opt->second.as_string().value()};
+                            }
+                        }
+                    }
+
+                    // Parse "metalness" field
+                    if (auto metalness_opt = pbr_obj.find("metalness"); metalness_opt != pbr_obj.end())
+                    {
+                        const auto &metalness_obj = metalness_opt->second;
+                        if (metalness_obj.as_number())
+                        {
+                            pbrMaterial.metalness = (float)metalness_obj.as_number().value();
+                        }
+                        else if (metalness_obj.as_object())
+                        {
+                            const auto &metalness_obj_val = metalness_obj.as_object().value();
+                            if (auto src_opt = metalness_obj_val.find("src"); src_opt != metalness_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.metalness = Texture{src_opt->second.as_string().value()};
+                            }
+                        }
+                    }
+
+                    material.material = pbrMaterial;
+                }
+                else if (auto lambertian_opt = obj.find("lambertian"); lambertian_opt != obj.end() && lambertian_opt->second.as_object())
+                {
+                    material.type = MaterialType::LAMBERTIAN;
+                    LambertianMaterial lambertianMaterial;
+
+                    const auto &lambertian_obj = lambertian_opt->second.as_object().value();
+
+                    // Parse "albedo" field
+                    if (auto albedo_opt = lambertian_obj.find("albedo"); albedo_opt != lambertian_obj.end())
+                    {
+                        const auto &albedo_obj = albedo_opt->second;
+                        if (albedo_obj.as_array())
+                        {
+                            auto &albedoArray = albedo_obj.as_array().value();
+                            if (albedoArray.size() == 3 && albedoArray[0].as_number() && albedoArray[1].as_number() && albedoArray[2].as_number())
+                            {
+                                lambertianMaterial.albedo = glm::vec3(
+                                    albedoArray[0].as_number().value(),
+                                    albedoArray[1].as_number().value(),
+                                    albedoArray[2].as_number().value());
+                            }
+                        }
+                        else if (albedo_obj.as_object())
+                        {
+                            const auto &albedo_obj_val = albedo_obj.as_object().value();
+                            if (auto src_opt = albedo_obj_val.find("src"); src_opt != albedo_obj_val.end() && src_opt->second.as_string())
+                            {
+                                lambertianMaterial.albedo = Texture{src_opt->second.as_string().value()};
+                            }
+                        }
+                    }
+
+                    material.material = lambertianMaterial;
+                }
+                else if (auto mirror_opt = obj.find("mirror"); mirror_opt != obj.end() && mirror_opt->second.as_object())
+                {
+                    material.type = MaterialType::MIRROR;
+                    // Mirror material does not have parameters in the provided example
+                    material.material = std::monostate{};
+                }
+                else if (auto environment_opt = obj.find("environment"); environment_opt != obj.end() && environment_opt->second.as_object())
+                {
+                    material.type = MaterialType::ENVIRONMENT;
+                    // Environment material does not have parameters in the provided example
+                    material.material = std::monostate{};
+                }
+
+                // Add the parsed material to the materials vector
+                s72_scene.materials.push_back(material);
+            }
+
+            // parse msg to Environment
+            else if (type_opt->second.as_string().value() == "ENVIRONMENT")
+            {
+                Environment env;
+                // Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    env.name = name_opt->second.as_string().value();
+                }
+                // Get "radiance" field
+                if (auto name_opt = obj.find("radiance"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    std::string channel_str = name_opt->second.as_string().value();
+                    if (channel_str == "src")
+                    {
+                        env.radiance.src = name_opt->second.as_string().value();
+                    }
+                    if (channel_str == "type")
+                    {
+                        env.radiance.type = name_opt->second.as_string().value();
+                    }
+                    if (channel_str == "format")
+                    {
+                        env.radiance.format = name_opt->second.as_string().value();
+                    }
+                }
+
+                s72_scene.environment = env;
+            }
         }
+
         index++;
     }
 }
@@ -617,6 +799,39 @@ void scene_workflow(sejp::value &val)
         }
 
         std::cout << "Meshes count: " << s72_scene.meshes.size() << "\n";
+    }
+
+    if (!s72_scene.materials.empty())
+    {
+        std::cout << "\nmaterial object[0] name: " << s72_scene.materials[0].name << "  ";
+        std::cout << "normalMap: ";
+        if (s72_scene.materials[0].normalmap.has_value())
+        {
+            std::cout << s72_scene.materials[0].normalmap.value().src;
+        };
+        std::cout << "  type: " << s72_scene.materials[0].type << "  ";
+        if (s72_scene.materials[0].normalmap.has_value())
+        {
+            std::cout << s72_scene.materials[0].normalmap.value().src;
+        };
+        if (std::holds_alternative<PBRMaterial>(s72_scene.materials[0].material))
+        {
+            // The variant holds a PBRMaterial
+            // PBRMaterial &pbr = std::get<PBRMaterial>(material);
+            // Use 'pbr'
+            std::cout << "pbr\n";
+        }
+        else if (std::holds_alternative<LambertianMaterial>(s72_scene.materials[0].material))
+        {
+            // The variant holds a LambertianMaterial
+            // LambertianMaterial &lambertian = std::get<LambertianMaterial>(material);
+            // Use 'lambertian'
+            std::cout << "lambertian\n";
+        }
+    }
+    else
+    {
+        std::cout << "\nno material!!!!\n";
     }
 
     // step2: build node trees and bind mesh, camera

@@ -36,8 +36,9 @@ const main_objs = [
 	maek.CPP('lib/SceneVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('helper/Helpers.cpp'),
-	maek.CPP('main.cpp'),
+	maek.CPP('main_viewer.cpp'),
 	maek.CPP('include/sejp/sejp.cpp'),
+	//maek.CPP('include/stb/deprecated/stb_image.c')
 ];
 
 //maek.GLSLC(...) builds a glsl source file:
@@ -90,11 +91,17 @@ main_objs.push( maek.CPP('pipelines/HeadlessPipeline.cpp', undefined, { depends:
 // 	prebuilt_objs.push(`pre/${maek.OS}-${process.arch}/refsol${maek.DEFAULT_OPTIONS.objSuffix}`);
 // }
 
+// const cube_objs = [
+// 	maek.CPP('main_cube.cpp'),
+// ];
+
 //const main_exe = maek.LINK([...main_objs, ...prebuilt_objs], 'bin/main');
-const main_exe = maek.LINK([...main_objs], 'bin/main');
+const viewer_exe = maek.LINK([...main_objs], 'bin/viewer');
+//const cube_exe = maek.LINK([...main_objs, ...cube_objs], 'bin/cube');
 
 //default targets:
-maek.TARGETS = [main_exe];
+maek.TARGETS = [viewer_exe];
+//maek.TARGETS = [cube_exe];
 
 //- - - - - - - - - - - - - - - - - - - - -
 function custom_flags_and_rules() {
