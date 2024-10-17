@@ -1449,7 +1449,7 @@ void Tutorial::make_default_texture()
 				bool is_light_gray = ((x / square_size) % 2 == (y / square_size) % 2);
 
 				// Gray and light gray values
-				uint8_t gray = is_light_gray ? 255 : 128; // Light gray (192) and regular gray (128)
+				uint8_t gray = is_light_gray ? 255 : 168; // Light gray (192) and regular gray (128)
 				uint8_t a = 0xff;						  // Fully opaque alpha channel
 
 				// Set r, g, b to the same value for grayscale
@@ -1650,7 +1650,7 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 	// move camera:
 	{
 		// combine inputs into a move:
-		constexpr float PlayerSpeed = 5.f;
+		constexpr float PlayerSpeed = 10.f;
 		glm::vec2 move = glm::vec2(0.0f);
 		if (playmode.left.pressed && !playmode.right.pressed)
 			move.x = -1.0f;

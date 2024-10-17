@@ -38,6 +38,10 @@ vec3 decodeRGBE(vec4 rgbe) {
     return color;
 }
 
+vec3 toneMapReinhard(vec3 color) {
+    return color / (color + vec3(1.0));
+}
+
 const int PBR = 0;
 const int LAMBERTIAN = 1;
 const int MIRROR = 2;
@@ -50,25 +54,33 @@ void main() {
 	vec3 viewDir = normalize(EYE - position);
 
 	vec3 reflectDir = reflect(-viewDir, n);
-	reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflection
+
+	vec3 energy = (SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
+		+ SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION)))/ 3.14159 ;
+	
 	
 	if (materialType.type == ENVIRONMENT) {
         // cubemap
         vec4 cubemapColor = texture(TEXTURE_CUBEMAP, n);
-		albedo = decodeRGBE(cubemapColor); 
+		albedo = decodeRGBE(cubemapColor);
+		outColor = vec4(energy * albedo, 1.0);
+		return;
+		// Apply tone mapping
+    	//albedo = toneMapReinhard(albedo);
     } 
 	else if(materialType.type == MIRROR){
+		reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflections
     	vec4 reflectionColor = texture(TEXTURE_CUBEMAP, reflectDir);
     	albedo = decodeRGBE(reflectionColor);
+		outColor = vec4(energy * albedo, 1.0);
+		return;
+		//albedo = toneMapReinhard(albedo);
 	}
 	else {
         // 2d texture
         albedo = texture(TEXTURE, texCoord).rgb;
 		alpha = texture(TEXTURE, texCoord).a;  // Get the alpha channel from the texture
     }
-
-	vec3 energy = (SKY_ENERGY * (0.5 * dot(n,SKY_DIRECTION) + 0.5)
-	       + SUN_ENERGY * max(0.0, dot(n,SUN_DIRECTION)))/ 3.14159 ;
 
     //outColor = vec4(texture(albedo, texCoord) * energy, 1.0);
 	outColor = vec4(energy * albedo, alpha);
