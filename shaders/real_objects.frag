@@ -63,10 +63,10 @@ void main() {
         // cubemap
         vec4 cubemapColor = texture(TEXTURE_CUBEMAP, n);
 		albedo = decodeRGBE(cubemapColor);
+		// Apply tone mapping
+    	// albedo = toneMapReinhard(albedo);
 		outColor = vec4(energy * albedo, 1.0);
 		return;
-		// Apply tone mapping
-    	//albedo = toneMapReinhard(albedo);
     } 
 	else if(materialType.type == MIRROR){
 		reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflections
