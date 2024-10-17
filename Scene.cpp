@@ -363,7 +363,6 @@ void get_scene(const std::vector<sejp::value> &array)
                                     }
                                     // std::cout << frame.value[j] << ",";
                                 }
-
                                 // std::cout << "    ";
 
                                 driver.frames.push_back(frame);
@@ -402,7 +401,195 @@ void get_scene(const std::vector<sejp::value> &array)
                 // Add the parsed driver to the drivers vector
                 s72_scene.drivers.push_back(driver);
             }
+            // parse msg to MATERIAL
+            else if (type_opt->second.as_string().value() == "MATERIAL")
+            {
+                MaterialObject material;
+
+                // Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    material.name = name_opt->second.as_string().value();
+                }
+
+                // Get "normalMap" field
+                if (auto normalmap_opt = obj.find("normalMap"); normalmap_opt != obj.end() && normalmap_opt->second.as_object())
+                {
+                    auto &normalmap_obj = normalmap_opt->second.as_object().value();
+
+                    if (auto src_opt = normalmap_obj.find("src"); src_opt != normalmap_obj.end() && src_opt->second.as_string())
+                    {
+                        material.normalmap = Texture{src_opt->second.as_string().value()};
+                        s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                    }
+                }
+
+                // Get "displacementMap" field
+                if (auto displacementmap_opt = obj.find("displacementMap"); displacementmap_opt != obj.end() && displacementmap_opt->second.as_object())
+                {
+                    auto &isplacementmap_obj = displacementmap_opt->second.as_object().value();
+                    if (auto src_opt = isplacementmap_obj.find("src"); src_opt != isplacementmap_obj.end() && src_opt->second.as_string())
+                    {
+                        material.displacementmap = Texture{src_opt->second.as_string().value()};
+                        s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                    }
+                }
+
+                // Parse material type (PBR, Lambertian, Mirror, Environment)
+                if (auto pbr_opt = obj.find("pbr"); pbr_opt != obj.end() && pbr_opt->second.as_object())
+                {
+                    material.type = MaterialType::PBR;
+                    PBRMaterial pbrMaterial;
+
+                    const auto &pbr_obj = pbr_opt->second.as_object().value();
+                    // Parse "albedo" field
+                    if (auto albedo_opt = pbr_obj.find("albedo"); albedo_opt != pbr_obj.end())
+                    {
+                        const auto &albedo_obj = albedo_opt->second;
+                        if (albedo_obj.as_array())
+                        {
+                            auto &albedoArray = albedo_obj.as_array().value();
+                            if (albedoArray.size() == 3 && albedoArray[0].as_number() && albedoArray[1].as_number() && albedoArray[2].as_number())
+                            {
+                                pbrMaterial.albedo = glm::vec3(
+                                    albedoArray[0].as_number().value(),
+                                    albedoArray[1].as_number().value(),
+                                    albedoArray[2].as_number().value());
+                            }
+                        }
+                        else if (albedo_opt->second.as_object())
+                        {
+                            const auto &albedo_obj_val = albedo_obj.as_object().value();
+                            if (auto src_opt = albedo_obj_val.find("src"); src_opt != albedo_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.albedo = Texture{src_opt->second.as_string().value()};
+                                s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                            }
+                        }
+                    }
+
+                    // Parse "roughness" field
+                    if (auto roughness_opt = pbr_obj.find("roughness"); roughness_opt != pbr_obj.end())
+                    {
+                        const auto &roughness_obj = roughness_opt->second;
+                        if (roughness_obj.as_number())
+                        {
+                            pbrMaterial.roughness = (float)roughness_obj.as_number().value();
+                        }
+                        else if (roughness_obj.as_object())
+                        {
+                            const auto &roughness_obj_val = roughness_obj.as_object().value();
+                            if (auto src_opt = roughness_obj_val.find("src"); src_opt != roughness_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.roughness = Texture{src_opt->second.as_string().value()};
+                                s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                            }
+                        }
+                    }
+
+                    // Parse "metalness" field
+                    if (auto metalness_opt = pbr_obj.find("metalness"); metalness_opt != pbr_obj.end())
+                    {
+                        const auto &metalness_obj = metalness_opt->second;
+                        if (metalness_obj.as_number())
+                        {
+                            pbrMaterial.metalness = (float)metalness_obj.as_number().value();
+                        }
+                        else if (metalness_obj.as_object())
+                        {
+                            const auto &metalness_obj_val = metalness_obj.as_object().value();
+                            if (auto src_opt = metalness_obj_val.find("src"); src_opt != metalness_obj_val.end() && src_opt->second.as_string())
+                            {
+                                pbrMaterial.metalness = Texture{src_opt->second.as_string().value()};
+                                s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                            }
+                        }
+                    }
+
+                    material.material = pbrMaterial;
+                }
+                else if (auto lambertian_opt = obj.find("lambertian"); lambertian_opt != obj.end() && lambertian_opt->second.as_object())
+                {
+                    material.type = MaterialType::LAMBERTIAN;
+                    LambertianMaterial lambertianMaterial;
+
+                    const auto &lambertian_obj = lambertian_opt->second.as_object().value();
+
+                    // Parse "albedo" field
+                    if (auto albedo_opt = lambertian_obj.find("albedo"); albedo_opt != lambertian_obj.end())
+                    {
+                        const auto &albedo_obj = albedo_opt->second;
+                        if (albedo_obj.as_array())
+                        {
+                            auto &albedoArray = albedo_obj.as_array().value();
+                            if (albedoArray.size() == 3 && albedoArray[0].as_number() && albedoArray[1].as_number() && albedoArray[2].as_number())
+                            {
+                                lambertianMaterial.albedo = glm::vec3(
+                                    albedoArray[0].as_number().value(),
+                                    albedoArray[1].as_number().value(),
+                                    albedoArray[2].as_number().value());
+                            }
+                        }
+                        else if (albedo_obj.as_object())
+                        {
+                            const auto &albedo_obj_val = albedo_obj.as_object().value();
+                            if (auto src_opt = albedo_obj_val.find("src"); src_opt != albedo_obj_val.end() && src_opt->second.as_string())
+                            {
+                                lambertianMaterial.albedo = Texture{src_opt->second.as_string().value()};
+                                s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                            }
+                        }
+                    }
+
+                    material.material = lambertianMaterial;
+                }
+                else if (auto mirror_opt = obj.find("mirror"); mirror_opt != obj.end() && mirror_opt->second.as_object())
+                {
+                    material.type = MaterialType::MIRROR;
+                    // Mirror material does not have parameters in the provided example
+                    material.material = std::monostate{};
+                }
+                else if (auto environment_opt = obj.find("environment"); environment_opt != obj.end() && environment_opt->second.as_object())
+                {
+                    material.type = MaterialType::ENVIRONMENT;
+                    // Environment material does not have parameters in the provided example
+                    material.material = std::monostate{};
+                }
+
+                // Add the parsed material to the materials vector
+                s72_scene.materials.push_back(material);
+            }
+
+            // parse msg to Environment
+            else if (type_opt->second.as_string().value() == "ENVIRONMENT")
+            {
+                // Environment env;
+                //  Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    s72_scene.environment.name = name_opt->second.as_string().value();
+                }
+                // Get "radiance" field
+                if (auto name_opt = obj.find("radiance"); name_opt != obj.end() && name_opt->second.as_object())
+                {
+                    const auto &channel_obj = name_opt->second.as_object().value();
+                    if (auto envir_src_opt = channel_obj.find("src"); envir_src_opt != channel_obj.end() && envir_src_opt->second.as_string())
+                    {
+                        s72_scene.environment.radiance.src = envir_src_opt->second.as_string().value();
+                        // s72_scene.textures_src.push_back(s72_scene.environment.radiance.src);
+                    }
+                    if (auto envir_type_opt = channel_obj.find("type"); envir_type_opt != channel_obj.end() && envir_type_opt->second.as_string())
+                    {
+                        s72_scene.environment.radiance.type = envir_type_opt->second.as_string().value();
+                    }
+                    if (auto opt = channel_obj.find("format"); opt != channel_obj.end() && opt->second.as_string())
+                    {
+                        s72_scene.environment.radiance.format = opt->second.as_string().value();
+                    }
+                }
+            }
         }
+
         index++;
     }
 }
@@ -431,6 +618,14 @@ Camera *find_camera_by_name(const std::string &camera_name)
     return nullptr; // Return nullptr if camera is not found
 }
 
+Node *find_node_by_name(std::string &str)
+{
+    assert(str != "");
+    assert(s72_scene.nodes_map.find(str) != s72_scene.nodes_map.end());
+
+    return s72_scene.nodes_map[str];
+}
+
 Node *find_node_by_name_or_index(const std::variant<std::string, double> &root)
 {
     if (std::holds_alternative<std::string>(root))
@@ -447,10 +642,17 @@ Node *find_node_by_name_or_index(const std::variant<std::string, double> &root)
     else if (std::holds_alternative<double>(root))
     {
         int node_index = static_cast<int>(std::get<double>(root)); // Convert double to int index
-        if (node_index >= 0 && node_index < static_cast<int>(s72_scene.nodes.size()))
+
+        // Additional checks to ensure node_index is valid
+        if (node_index < 0 || node_index >= static_cast<int>(s72_scene.nodes.size()))
         {
-            return &s72_scene.nodes[node_index];
+            std::cerr << "Error: node_index " << node_index
+                      << " is out of bounds! Valid range is [0, "
+                      << s72_scene.nodes.size() - 1 << "]\n";
+            return nullptr;
         }
+        assert(node_index >= 0 && node_index < static_cast<int>(s72_scene.nodes.size()));
+        return &s72_scene.nodes[node_index];
     }
     return nullptr; // Node not found
 }
@@ -521,16 +723,29 @@ void build_node_trees()
 
     for (auto &root : s72_scene.scene.roots)
     {
-        Node *root_node = find_node_by_name_or_index(root);
-        std::vector<Node *> path;
-
-        if (root_node != nullptr)
+        if (std::holds_alternative<std::string>(root))
         {
-            // Start DFS from this root node
-            // s72_scene.nodes_map.push_back(root_node); // Store root node
-            s72_scene.nodes_map[root_node->name] = (root_node);
-            // std::cout << "\ndfs_build_tree\n";
-            dfs_build_tree(root_node, nullptr, path); // Build the tree from this root
+            std::string root_name = std::get<std::string>(root);
+            Node *root_node_ = nullptr;
+            for (auto &node : s72_scene.nodes)
+            {
+                if (node.name == root_name)
+                {
+                    root_node_ = &node;
+                }
+            }
+            assert(root_node_ != nullptr);
+
+            std::vector<Node *> path;
+
+            if (root_node_ != nullptr)
+            {
+                // Start DFS from this root node
+                // s72_scene.nodes_map.push_back(root_node); // Store root node
+                s72_scene.nodes_map[root_node_->name] = (root_node_);
+                // std::cout << "\ndfs_build_tree\n";
+                dfs_build_tree(root_node_, nullptr, path); // Build the tree from this root
+            }
         }
     }
 }
@@ -558,6 +773,14 @@ void bind_driver()
 
 void scene_workflow(sejp::value &val)
 {
+    // step0: clear vector
+    s72_scene.nodes.clear();
+    s72_scene.meshes.clear();
+    s72_scene.materials.clear();
+    s72_scene.cameras.clear();
+    s72_scene.drivers.clear();
+    s72_scene.textures_src.clear();
+
     // step1: load .s72, parse all information
     if (auto array_opt = val.as_array(); array_opt)
     {
@@ -565,59 +788,14 @@ void scene_workflow(sejp::value &val)
         get_scene(array);
     }
 
-    // debug: print msg
-    if (0)
-    {
-        std::cout << "\nscene name: " << s72_scene.scene.name << std::endl;
-        for (auto &a : s72_scene.scene.roots)
-        {
-            std::visit([](const auto &value)
-                       {
-                           std::cout << value; // Print the string or double directly
-                       },
-                       a);
-            std::cout << ", ";
-        }
-        std::cout << "\n";
-
-        // Print all Node information
-        std::cout << "Nodes information: " << std::endl;
-        for (const auto &node : s72_scene.nodes)
-        {
-            // Print Node's name
-            std::cout << "Node name: " << node.name << std::endl;
-
-            // Print Translation
-            std::cout << "  Translation: ["
-                      << node.position.x << ", "
-                      << node.position.y << ", "
-                      << node.position.z << "]" << std::endl;
-
-            // Print Children
-            if (!node.children.empty())
-            {
-                std::cout << "  Children: ";
-                for (auto &a : node.children)
-                {
-                    std::visit([](const auto &value)
-                               {
-                                   std::cout << value; // Print the string or double directly
-                               },
-                               a);
-                    std::cout << ", ";
-                }
-                std::cout << std::endl;
-            }
-
-            // Print optional fields
-            if (!node.mesh_name.empty())
-            {
-                std::cout << "  Mesh: " << node.mesh_name << std::endl;
-            }
-        }
-
-        std::cout << "Meshes count: " << s72_scene.meshes.size() << "\n";
-    }
+    // step1.5: add default material
+    LambertianMaterial lamber = LambertianMaterial::LambertianMaterial();
+    MaterialObject material_obj{
+        .name = "default_material",
+        .type = LAMBERTIAN,
+        .material = lamber,
+    };
+    s72_scene.materials.push_back(material_obj);
 
     // step2: build node trees and bind mesh, camera
     build_node_trees();
@@ -631,6 +809,9 @@ void scene_workflow(sejp::value &val)
         std::cout << "\nmake user camera\n";
         make_user_camera();
     }
+
+    // debug msg
+    print_s72();
 }
 
 void make_user_camera()
@@ -885,4 +1066,102 @@ glm::mat4x3 Node::make_world_to_local() const
 glm::mat4 Camera::make_projection() const
 {
     return glm::perspective(perspective.vfov, perspective.aspect, perspective.near, perspective.far);
+}
+
+void print_s72()
+{
+    std::cout << "\nscene name: " << s72_scene.scene.name << std::endl;
+    printf("roots.size(): %zd, nodes.size(): %zd, meshes.size(): %zd, materials.size(): %zd\n", s72_scene.scene.roots.size(), s72_scene.nodes.size(),
+           s72_scene.meshes.size(), s72_scene.materials.size());
+
+    for (auto &a : s72_scene.scene.roots)
+    {
+        std::visit([](const auto &value)
+                   {
+                       std::cout << value; // Print the string or double directly
+                   },
+                   a);
+        std::cout << ", ";
+    }
+    std::cout << "\n";
+
+    // Print all Node information
+    std::cout << "Nodes information: " << std::endl;
+    for (const auto &node : s72_scene.nodes)
+    {
+        // Print Node's name
+        std::cout << "Node name: " << node.name << std::endl;
+
+        // Print Translation
+        // std::cout << "  Translation: ["
+        //           << node.position.x << ", "
+        //           << node.position.y << ", "
+        //           << node.position.z << "]" << std::endl;
+
+        // Print Children
+        if (!node.children.empty())
+        {
+            std::cout << "  Children: ";
+            for (auto &a : node.children)
+            {
+                std::visit([](const auto &value)
+                           {
+                               std::cout << value; // Print the string or double directly
+                           },
+                           a);
+                std::cout << ", ";
+            }
+            std::cout << std::endl;
+        }
+
+        // Print optional fields
+        if (!node.mesh_name.empty())
+        {
+            std::cout << "  Mesh: " << node.mesh_name << std::endl;
+        }
+    }
+
+    std::cout << "Meshes count: " << s72_scene.meshes.size() << "\n";
+    std::cout << "Print mesh_material_map size: " << s72_scene.mesh_material_map.size() << "\n";
+
+    for (const auto &[mesh_, material_] : s72_scene.mesh_material_map)
+    {
+        std::cout << mesh_->name << " : " << material_->name << "  type: " << material_->type << std::endl;
+    }
+
+    // std::cin.get();
+    /*
+        if (!s72_scene.materials.empty())
+        {
+            std::cout << "\nmaterial object[0] name: " << s72_scene.materials[0].name << "  ";
+            std::cout << "normalMap: ";
+            if (s72_scene.materials[0].normalmap.has_value())
+            {
+                std::cout << s72_scene.materials[0].normalmap.value().src;
+            };
+            std::cout << "  type: " << s72_scene.materials[0].type << "  ";
+            if (s72_scene.materials[0].normalmap.has_value())
+            {
+                std::cout << s72_scene.materials[0].normalmap.value().src;
+            };
+            if (std::holds_alternative<PBRMaterial>(s72_scene.materials[0].material))
+            {
+                // The variant holds a PBRMaterial
+                // PBRMaterial &pbr = std::get<PBRMaterial>(material);
+                // Use 'pbr'
+                std::cout << "pbr\n";
+            }
+            else if (std::holds_alternative<LambertianMaterial>(s72_scene.materials[0].material))
+            {
+                // The variant holds a LambertianMaterial
+                // LambertianMaterial &lambertian = std::get<LambertianMaterial>(material);
+                // Use 'lambertian'
+                std::cout << "lambertian\n";
+            }
+        }
+        else
+        {
+            std::cout << "\nno material!!!!\n";
+        }
+        */
 }

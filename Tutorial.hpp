@@ -155,6 +155,10 @@ struct Tutorial : RTG::Application
 			{
 				float r, g, b, padding_;
 			} SUN_ENERGY;
+			struct
+			{
+				float x, y, z, padding_;
+			} EYE;
 		};
 
 		// types for descriptors:
@@ -171,7 +175,7 @@ struct Tutorial : RTG::Application
 		// push constants
 		struct Push
 		{
-			int use_out_color;
+			int materialType;
 		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -270,11 +274,16 @@ struct Tutorial : RTG::Application
 	struct SceneObject
 	{
 		ObjectVertices scene_object_vertices;
-		glm::mat4 scene_transform;
+		glm::mat4 transform;
 		Node *object_node_;
+		Mesh *object_mesh_;
 	};
 
 	std::vector<SceneObject> scene_objects;
+
+	Helpers::AllocatedImage Scene_env;
+	VkImageView Scene_env_view;
+	VkSampler Scene_env_sampler = VK_NULL_HANDLE;
 
 	std::vector<Helpers::AllocatedImage> textures;
 	std::vector<VkImageView> texture_views;
@@ -284,8 +293,24 @@ struct Tutorial : RTG::Application
 
 	void load_s72();
 	void set_mesh_vertices_map(std::vector<SceneVertex> &vertices);
+	void set_scene_objects(std::vector<SceneVertex> &vertices);
+	void set_mesh_material_map();
 	void process_node(std::vector<SceneVertex> &vertices, Node *node);
 	void load_vertex_from_b72(std::vector<SceneVertex> &vertices);
+	//--------------------------------------------------------------------
+	//  Constructor functions:
+	void create_render_pass();
+	void create_description_pool();
+	void setup_workspaces();
+	void setup_environ();
+	void make_default_environ();
+	void make_default_texture();
+	void load_scene_object_textures();
+	void setup_env_views_sample();
+	void setup_views_sample();
+
+	void setup_texture_descriptor_pool();
+	void make_texture_descriptor_sets();
 	//--------------------------------------------------------------------
 	//  Resources that change when the swapchain is resized:
 
@@ -309,7 +334,7 @@ struct Tutorial : RTG::Application
 
 	std::vector<LinesPipeline::Vertex> lines_vertices;
 
-	ObjectsPipeline::World world;
+	ScenesPipeline::World world;
 
 	struct ObjectInstance
 	{
@@ -324,6 +349,8 @@ struct Tutorial : RTG::Application
 		ObjectVertices vertices;
 		ScenesPipeline::Transform transform;
 		uint32_t texture = 0;
+		Mesh *mesh_;
+		MaterialObject *material_;
 	};
 	std::vector<ScenesObjectInstance> scene_instances;
 

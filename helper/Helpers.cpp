@@ -1,5 +1,8 @@
 #include "Helpers.hpp"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "../include/stb/stb_image.h"
+
 #include "../RTG.hpp"
 #include "VK.hpp"
 
@@ -156,6 +159,42 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat
 		.arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+
+	VK(vkCreateImage(rtg.device, &create_info, nullptr, &image.handle));
+
+	VkMemoryRequirements req;
+	vkGetImageMemoryRequirements(rtg.device, image.handle, &req);
+
+	image.allocation = allocate(req, properties, map);
+
+	VK(vkBindImageMemory(rtg.device, image.handle, image.allocation.handle, image.allocation.offset));
+	return image;
+}
+
+Helpers::AllocatedImage Helpers::create_cubemap_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map)
+{
+	AllocatedImage image;
+	image.extent = extent;
+	image.format = format;
+	// image.isCubemap = true;
+
+	VkImageCreateInfo create_info{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, // important
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = format,
+		.extent{
+			.width = extent.width,
+			.height = extent.height,
+			.depth = 1},
+		.mipLevels = 1,
+		.arrayLayers = 6, // For cubemap, it has 6 faces
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
 		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -343,6 +382,132 @@ void Helpers::transfer_to_image(void *data, size_t size, AllocatedImage &target)
 			0, nullptr,							   // buffer memory barrier count, pointer
 			1, &barrier							   // image memory barrier count, pointer
 		);
+	}
+
+	// end and submit the command buffer
+	VK(vkEndCommandBuffer(transfer_command_buffer));
+
+	VkSubmitInfo submit_info{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &transfer_command_buffer};
+
+	VK(vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, VK_NULL_HANDLE));
+
+	// wait for command buffer to finish executing
+	VK(vkQueueWaitIdle(rtg.graphics_queue));
+
+	// destroy the source buffer
+	destroy_buffer(std::move(transfer_src));
+}
+
+void Helpers::transfer_to_cubemap_image(void *data, size_t size, AllocatedImage &target) // NOTE: image layout after call is VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+{
+	assert(target.handle);																				 // target image should be allocated already																	 // cubemap images are 2D arrays with depth 1
+	assert(target.extent.width * target.extent.height * 6 * get_bytes_per_pixel(target.format) == size); // Ensure size matches all 6 faces
+
+	// create a host-coherent source buffer
+	AllocatedBuffer transfer_src = create_buffer(
+		size,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		Mapped);
+
+	// copy cubemap data into the source buffer (6 faces of the cubemap)
+	std::memcpy(transfer_src.allocation.data(), data, size);
+
+	// begin recording a command buffer
+	VK(vkResetCommandBuffer(transfer_command_buffer, 0));
+
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, // will record again every submit
+	};
+
+	VK(vkBeginCommandBuffer(transfer_command_buffer, &begin_info));
+
+	VkImageSubresourceRange whole_image{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.baseMipLevel = 0,
+		.levelCount = 1,
+		.baseArrayLayer = 0,
+		.layerCount = 6, // For cubemap, 6 faces
+	};
+
+	{ // Transition all 6 faces to TRANSFER_DST_OPTIMAL layout
+		VkImageMemoryBarrier barrier{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = 0,
+			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = target.handle,
+			.subresourceRange = whole_image,
+		};
+
+		vkCmdPipelineBarrier(
+			transfer_command_buffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier);
+	}
+
+	{ // Copy the source buffer to the cubemap image (6 layers)
+		for (uint32_t face = 0; face < 6; ++face)
+		{
+			VkBufferImageCopy region{
+				.bufferOffset = face * target.extent.width * target.extent.height * get_bytes_per_pixel(target.format), // Offset for each face
+				.bufferRowLength = target.extent.width,
+				.bufferImageHeight = target.extent.height,
+				.imageSubresource{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.mipLevel = 0,
+					.baseArrayLayer = face, // Copy into one face (layer) at a time
+					.layerCount = 1,
+				},
+				.imageOffset{.x = 0, .y = 0, .z = 0},
+				.imageExtent{
+					.width = target.extent.width,
+					.height = target.extent.height,
+					.depth = 1,
+				},
+			};
+
+			vkCmdCopyBufferToImage(
+				transfer_command_buffer,
+				transfer_src.handle,
+				target.handle,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &region);
+		}
+	}
+
+	{ // Transition all 6 faces to SHADER_READ_ONLY_OPTIMAL layout
+		VkImageMemoryBarrier barrier{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = target.handle,
+			.subresourceRange = whole_image,
+		};
+
+		vkCmdPipelineBarrier(
+			transfer_command_buffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier);
 	}
 
 	// end and submit the command buffer
