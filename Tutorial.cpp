@@ -612,6 +612,23 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 					ScenesPipeline::Push push{
 						.materialType = inst.material_->type,
 					};
+
+					if (inst.material_->type == LAMBERTIAN && std::holds_alternative<LambertianMaterial>(inst.material_->material))
+					{
+						auto lamber = std::get<LambertianMaterial>(inst.material_->material);
+						if (std::holds_alternative<glm::vec3>(lamber.albedo))
+						{
+							glm::vec3 albedo = std::get<glm::vec3>(lamber.albedo);
+							push.albedo.r = albedo.r;
+							push.albedo.g = albedo.g;
+							push.albedo.b = albedo.b;
+						}
+						else if (std::holds_alternative<Texture>(lamber.albedo))
+						{
+							push.src_albedo = 1;
+						}
+					}
+
 					vkCmdPushConstants(workspace.command_buffer, scenes_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
 
 					// std::cout << " done!" << std::endl;
@@ -736,7 +753,7 @@ void Tutorial::update(float dt)
 					s72_scene.current_camera_ = &(s72_scene.cameras[0]);
 				}
 
-				// TODO: for this camera, calculate the WORLD_FROM_LOCAL from path
+				// for this camera, calculate the WORLD_FROM_LOCAL from path
 				std::string camera_name = s72_scene.current_camera_->name; // Assuming the first camera
 				if (s72_scene.cameras_path.find(camera_name) != s72_scene.cameras_path.end())
 				{
@@ -803,6 +820,18 @@ void Tutorial::update(float dt)
 					.mesh_ = mesh_,
 					.material_ = material_obj_,
 				};
+
+				if (material_obj_->type == LAMBERTIAN && std::holds_alternative<LambertianMaterial>(material_obj_->material))
+				{
+					auto lamber = std::get<LambertianMaterial>(material_obj_->material);
+					if (std::holds_alternative<Texture>(lamber.albedo))
+					{
+						auto texture = std::get<Texture>(lamber.albedo);
+						std::string src = texture.src;
+						if (s72_scene.textures_src_index_map.find(src) != s72_scene.textures_src_index_map.end())
+							obj.texture = s72_scene.textures_src_index_map[src];
+					}
+				}
 
 				// glm::mat4 obj_world_from_local = WORLD_FROM_LOCAL * glm::make_mat4(obj_transform.WORLD_FROM_LOCAL.data());
 
@@ -1247,7 +1276,7 @@ void Tutorial::load_scene_object_textures()
 			std::string filename = "./resource/" + t_src;
 			[[maybe_unused]] unsigned char *image_data = stbi_load(filename.c_str(), &w, &h, &n, 0);
 			ok = stbi_info(filename.c_str(), &w, &h, &n);
-			std::cout << "texture: " << filename.c_str() << " ok? " << ok << ": " << w << ", " << h << ", " << n;
+			std::cout << "texture: " << filename.c_str() << " ok? " << ok << ": " << w << ", " << h << ", " << n << "\n";
 
 			std::vector<uint8_t> rgba_data;
 			if (n == 3)

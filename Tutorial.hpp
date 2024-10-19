@@ -176,6 +176,10 @@ struct Tutorial : RTG::Application
 		struct Push
 		{
 			int materialType;
+			int src_albedo = 0;
+			int src_roughness = 0;
+			int src_metalness = 0;
+			glm::vec3 albedo;
 		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;

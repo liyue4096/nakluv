@@ -10,6 +10,10 @@ layout(set=0,binding=0,std140) uniform World {
 
 layout(push_constant) uniform Push {
 	int type;
+	int src_albedo;
+	int src_roughness;
+	int src_metalness;
+	vec3 albedo;
 } materialType;
 
 layout(set=2, binding=0) uniform sampler2D TEXTURE;
@@ -75,6 +79,15 @@ void main() {
 		outColor = vec4(energy * albedo, 1.0);
 		return;
 		//albedo = toneMapReinhard(albedo);
+	}
+	else if(materialType.type == LAMBERTIAN){
+		if(materialType.src_albedo == 0){
+			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+		}
+		else{
+			albedo = texture(TEXTURE, texCoord).rgb;
+			alpha = texture(TEXTURE, texCoord).a;
+		}
 	}
 	else {
         // 2d texture

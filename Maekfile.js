@@ -36,8 +36,12 @@ const main_objs = [
 	maek.CPP('lib/SceneVertex.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('helper/Helpers.cpp'),
-	maek.CPP('main.cpp'),
+
 	maek.CPP('include/sejp/sejp.cpp'),
+];
+
+const viewer_objs = [
+	maek.CPP('main.cpp'),
 ];
 
 //maek.GLSLC(...) builds a glsl source file:
@@ -79,22 +83,24 @@ main_objs.push( maek.CPP('pipelines/HeadlessPipeline.cpp', undefined, { depends:
 
 // const prebuilt_objs = [ ];
 
-// //use the prebuilt refsol.o unless refsol.cpp exists:
-// if (require('fs').existsSync('refsol.cpp')) {
-// 	const refsol_shaders = [
-// 		maek.GLSLC('refsol-background.vert'),
-// 		maek.GLSLC('refsol-background.frag'),
-// 	];
-// 	main_objs.push( maek.CPP('refsol.cpp', `pre/${maek.OS}-${process.arch}/refsol`, { depends:refsol_shaders } ) );
-// } else {
-// 	prebuilt_objs.push(`pre/${maek.OS}-${process.arch}/refsol${maek.DEFAULT_OPTIONS.objSuffix}`);
-// }
-
 //const main_exe = maek.LINK([...main_objs, ...prebuilt_objs], 'bin/main');
-const main_exe = maek.LINK([...main_objs], 'bin/viewer');
+const main_exe = maek.LINK([...main_objs, ...viewer_objs], 'bin/viewer');
 
 //default targets:
-maek.TARGETS = [main_exe];
+//maek.TARGETS = [main_exe];
+
+//-----------------------------------------
+// main_cube.exe
+
+const cube_objs = [
+	maek.CPP('./diffuse/Cubemap.cpp'),
+	maek.CPP('main_cube.cpp'),  // Adding main_cube.cpp here
+];
+
+const cube_exe = maek.LINK([...main_objs, ...cube_objs], 'bin/cube');
+
+// Set up the targets
+maek.TARGETS = [main_exe, cube_exe];
 
 //- - - - - - - - - - - - - - - - - - - - -
 function custom_flags_and_rules() {
