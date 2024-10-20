@@ -249,14 +249,15 @@ struct S72_scene
     std::unordered_map<Mesh *, MeshVertices> mesh_vertices_map;
     std::unordered_map<Mesh *, BBox> mesh_bbox_map;
     std::unordered_map<Mesh *, MaterialObject *> mesh_material_map;
-    std::unordered_map<MaterialObject *, uint32_t> material_textureid_map; // wait to upgrad 1->n
+    std::unordered_map<MaterialObject *, std::vector<int>> material_textureindex_map; // index 0: albedo, 1: normal map, 2: displacement map
+    std::unordered_map<MaterialObject *, int> material_descriptor_index_map;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<MaterialObject> materials;
     std::vector<Camera> cameras;
     std::vector<Driver> drivers;
     std::vector<std::string> textures_src;
-    std::unordered_map<std::string, uint32_t> textures_src_index_map; // wait to upgrad 1->n
+    std::unordered_map<std::string, uint32_t> textures_src_index_map;
     Camera_Mode camera_mode = SCENE;
     Camera *current_camera_;
     Environment environment; // unique
@@ -271,6 +272,8 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
 void build_node_trees();
 void bind_driver();
 void make_user_camera();
+
+void setup_material_textureindex_map();
 
 // set up all the info from s72 file
 void scene_workflow(sejp::value &val);

@@ -410,6 +410,7 @@ void get_scene(const std::vector<sejp::value> &array)
                 if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
                 {
                     material.name = name_opt->second.as_string().value();
+                    // printf("material.name %s\n", material.name.c_str());
                 }
 
                 // Get "normalMap" field
@@ -421,6 +422,7 @@ void get_scene(const std::vector<sejp::value> &array)
                     {
                         material.normalmap = Texture{src_opt->second.as_string().value()};
                         s72_scene.textures_src.push_back(src_opt->second.as_string().value());
+                        // printf("normal map %s\n", s72_scene.textures_src.back().c_str());
                     }
                 }
 
@@ -850,6 +852,82 @@ void make_user_camera()
     s72_scene.cameras_path[node.camera_name] = path;
 
     // std::cout << "add user-camera done\n";
+}
+
+void setup_material_textureindex_map()
+{
+    // set default material with default texture
+    std::vector<int> default_texture_index = {0, -1, -1};
+    s72_scene.material_textureindex_map[&s72_scene.materials.back()] = default_texture_index;
+
+    int index = 0;
+    for (auto &material_obj : s72_scene.materials)
+    {
+        std::vector<int> texture_index(3, -1);
+
+        if (std::holds_alternative<PBRMaterial>(material_obj.material))
+        {
+            PBRMaterial pbr = std::get<PBRMaterial>(material_obj.material);
+            auto &albedo = pbr.albedo;
+            if (std::holds_alternative<Texture>(albedo))
+            {
+                auto &texture = std::get<Texture>(albedo);
+                if (s72_scene.textures_src_index_map.find(texture.src) != s72_scene.textures_src_index_map.end())
+                {
+                    auto albedo_index = s72_scene.textures_src_index_map[texture.src];
+                    texture_index[0] = albedo_index;
+
+                    s72_scene.material_textureindex_map[&material_obj] = texture_index;
+                }
+            }
+        }
+        else if (std::holds_alternative<LambertianMaterial>(material_obj.material))
+        {
+            LambertianMaterial lambertian = std::get<LambertianMaterial>(material_obj.material);
+            auto &albedo = lambertian.albedo;
+            if (std::holds_alternative<Texture>(albedo))
+            {
+                auto &texture = std::get<Texture>(albedo);
+                if (s72_scene.textures_src_index_map.find(texture.src) != s72_scene.textures_src_index_map.end())
+                {
+                    auto albedo_index = s72_scene.textures_src_index_map[texture.src];
+                    texture_index[0] = albedo_index;
+
+                    s72_scene.material_textureindex_map[&material_obj] = texture_index;
+                }
+            }
+        }
+
+        if (material_obj.normalmap.has_value())
+        {
+            auto normalmap_name = material_obj.normalmap.value().src;
+            if (s72_scene.textures_src_index_map.find(normalmap_name) != s72_scene.textures_src_index_map.end())
+            {
+                auto normalmap_index = s72_scene.textures_src_index_map[normalmap_name];
+                texture_index[1] = normalmap_index;
+
+                s72_scene.material_textureindex_map[&material_obj] = texture_index;
+            }
+        }
+        if (material_obj.displacementmap.has_value())
+        {
+            auto displacementmap_name = material_obj.displacementmap.value().src;
+            if (s72_scene.textures_src_index_map.find(displacementmap_name) != s72_scene.textures_src_index_map.end())
+            {
+                auto displacementmap_name_index = s72_scene.textures_src_index_map[displacementmap_name];
+                texture_index[2] = displacementmap_name_index;
+
+                s72_scene.material_textureindex_map[&material_obj] = texture_index;
+            }
+        }
+
+        printf("material Index: %d, name: %s, texture( %d, %d, %d)\n", index, material_obj.name.c_str(), texture_index[0], texture_index[1], texture_index[2]);
+        index++;
+    }
+
+    std::vector<int> t_index = s72_scene.material_textureindex_map[&s72_scene.materials.back()];
+    printf("material name: %s, texture( %d, %d, %d)\n", s72_scene.materials.back().name.c_str(), t_index[0], t_index[1], t_index[2]);
+    printf("texture size: %zd,  s72_scene.material_textureindex_map size : %zd\n", s72_scene.textures_src.size(), s72_scene.material_textureindex_map.size());
 }
 
 glm::mat4 generate_transform(const Node *node)

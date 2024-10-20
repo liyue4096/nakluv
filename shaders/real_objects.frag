@@ -18,11 +18,13 @@ layout(push_constant) uniform Push {
 
 layout(set=2, binding=0) uniform sampler2D TEXTURE;
 layout(set=2, binding=1) uniform samplerCube TEXTURE_CUBEMAP;
+layout(set=2, binding=2) uniform sampler2D NORMAL_MAP;
 
 layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec4 tangent;
 layout(location=3) in vec2 texCoord;
+layout(location=4) in mat3 TBN;
 
 #ifdef USE_COLOR
 layout(location=4) in vec4 Color;
@@ -62,7 +64,18 @@ void main() {
 	vec3 energy = (SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
 		+ SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION)))/ 3.14159 ;
 	
-	
+    if (materialType.type == LAMBERTIAN || materialType.type == PBR) {
+        // Sample and decode the normal map
+        vec3 normal_tangent = texture(NORMAL_MAP, texCoord).rgb;
+        normal_tangent = normal_tangent * 2.0 - 1.0;  // Convert from [0, 1] to [-1, 1]
+
+        // Transform the normal from tangent space to world space using the TBN matrix
+        n = normalize(TBN * normal_tangent);
+    } else {
+        // Use interpolated normal if no normal map is used
+        n = normalize(TBN[2]);  // TBN[2] is the interpolated normal
+    }
+
 	if (materialType.type == ENVIRONMENT) {
         // cubemap
         vec4 cubemapColor = texture(TEXTURE_CUBEMAP, n);
@@ -73,7 +86,7 @@ void main() {
 		return;
     } 
 	else if(materialType.type == MIRROR){
-		reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflections
+		//reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflections
     	vec4 reflectionColor = texture(TEXTURE_CUBEMAP, reflectDir);
     	albedo = decodeRGBE(reflectionColor);
 		outColor = vec4(energy * albedo, 1.0);
@@ -90,11 +103,14 @@ void main() {
 		}
 	}
 	else {
-        // 2d texture
-        albedo = texture(TEXTURE, texCoord).rgb;
-		alpha = texture(TEXTURE, texCoord).a;  // Get the alpha channel from the texture
+        if(materialType.src_albedo == 0){
+			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+		}
+		else{
+			albedo = texture(TEXTURE, texCoord).rgb;
+			alpha = texture(TEXTURE, texCoord).a;
+		}
     }
 
-    //outColor = vec4(texture(albedo, texCoord) * energy, 1.0);
 	outColor = vec4(energy * albedo, alpha);
 }

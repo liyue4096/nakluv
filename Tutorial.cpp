@@ -105,7 +105,12 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		load_scene_object_textures();
 
+		setup_material_textureindex_map();
+
 		setup_views_sample();
+
+		make_default_normal();
+		setup_normal_views_sample();
 	}
 
 	setup_texture_descriptor_pool();
@@ -168,6 +173,17 @@ Tutorial::~Tutorial()
 	if (Scene_env.handle)
 	{
 		rtg.helpers.destroy_image(std::move(Scene_env));
+	}
+
+	if (flat_normal_view)
+	{
+		vkDestroyImageView(rtg.device, flat_normal_view, nullptr);
+		flat_normal_view = VK_NULL_HANDLE;
+	}
+
+	if (flat_normal_map.handle)
+	{
+		rtg.helpers.destroy_image(std::move(flat_normal_map));
 	}
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
@@ -596,14 +612,19 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 			{
 				uint32_t index = uint32_t(&inst - &scene_instances[0]);
 
+				int texture_descriptor_index = 0;
+
+				if (s72_scene.material_descriptor_index_map.find(inst.material_) != s72_scene.material_descriptor_index_map.end())
+					texture_descriptor_index = s72_scene.material_descriptor_index_map[inst.material_];
+
 				// bind texture descriptor set:
 				vkCmdBindDescriptorSets(
-					workspace.command_buffer,			   // command buffer
-					VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
-					scenes_pipeline.layout,				   // pipeline layout
-					2,									   // second set
-					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
-					0, nullptr							   // dynamic offsets count, ptr
+					workspace.command_buffer,						   // command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,				   // pipeline bind point
+					scenes_pipeline.layout,							   // pipeline layout
+					2,												   // second set
+					1, &texture_descriptors[texture_descriptor_index], // descriptor sets count, ptr
+					0, nullptr										   // dynamic offsets count, ptr
 				);
 
 				{ // push materialType:
@@ -625,7 +646,22 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 						}
 						else if (std::holds_alternative<Texture>(lamber.albedo))
 						{
-							push.src_albedo = 1;
+							push.src_albedo = 1; // png sign
+						}
+					}
+					else if (inst.material_->type == PBR && std::holds_alternative<PBRMaterial>(inst.material_->material))
+					{
+						auto pbr = std::get<PBRMaterial>(inst.material_->material);
+						if (std::holds_alternative<glm::vec3>(pbr.albedo))
+						{
+							glm::vec3 albedo = std::get<glm::vec3>(pbr.albedo);
+							push.albedo.r = albedo.r;
+							push.albedo.g = albedo.g;
+							push.albedo.b = albedo.b;
+						}
+						else if (std::holds_alternative<Texture>(pbr.albedo))
+						{
+							push.src_albedo = 1; // png sign
 						}
 					}
 
@@ -829,7 +865,24 @@ void Tutorial::update(float dt)
 						auto texture = std::get<Texture>(lamber.albedo);
 						std::string src = texture.src;
 						if (s72_scene.textures_src_index_map.find(src) != s72_scene.textures_src_index_map.end())
+						{
+							// printf("%s: %s\n", mesh_->name.c_str(), src.c_str());
 							obj.texture = s72_scene.textures_src_index_map[src];
+						}
+					}
+				}
+				else if (material_obj_->type == PBR && std::holds_alternative<PBRMaterial>(material_obj_->material))
+				{
+					auto pbr = std::get<PBRMaterial>(material_obj_->material);
+					if (std::holds_alternative<Texture>(pbr.albedo))
+					{
+						auto texture = std::get<Texture>(pbr.albedo);
+						std::string src = texture.src;
+						if (s72_scene.textures_src_index_map.find(src) != s72_scene.textures_src_index_map.end())
+						{
+							// printf("%s: %s\n", mesh_->name.c_str(), src.c_str());
+							obj.texture = s72_scene.textures_src_index_map[src];
+						}
 					}
 				}
 
@@ -1218,6 +1271,21 @@ void Tutorial::make_default_environ()
 	}
 }
 
+void Tutorial::make_default_normal()
+{
+	std::vector<uint8_t> data = {128, 128, 255, 0};
+	flat_normal_map = rtg.helpers.create_image(
+		VkExtent2D{.width = 1, .height = 1}, // size of image
+		VK_FORMAT_R8G8B8A8_UNORM,			 // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+		Helpers::Unmapped);
+
+	// transfer data:
+	rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), flat_normal_map);
+}
+
 void Tutorial::setup_env_views_sample()
 {
 	{ // make image views for the textures
@@ -1279,6 +1347,13 @@ void Tutorial::load_scene_object_textures()
 			std::cout << "texture: " << filename.c_str() << " ok? " << ok << ": " << w << ", " << h << ", " << n << "\n";
 
 			std::vector<uint8_t> rgba_data;
+
+			if (n == 1)
+			{ // displacement omit it at this stage
+				stbi_image_free(image_data);
+				continue;
+			}
+
 			if (n == 3)
 			{
 				size_t size = w * h * n;
@@ -1374,6 +1449,29 @@ void Tutorial::setup_views_sample()
 	}
 }
 
+void Tutorial::setup_normal_views_sample()
+{
+	VkImageViewCreateInfo create_info{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.flags = 0,
+		.image = flat_normal_map.handle,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = flat_normal_map.format,
+		// .components sets swizzling and is fine when zero-initialized
+		.subresourceRange{
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	VK(vkCreateImageView(rtg.device, &create_info, nullptr, &flat_normal_view));
+
+	// use texture sampler for the normal
+}
+
 void Tutorial::setup_texture_descriptor_pool()
 {
 	// create the texture descriptor pool
@@ -1382,7 +1480,7 @@ void Tutorial::setup_texture_descriptor_pool()
 	std::array<VkDescriptorPoolSize, 1> pool_sizes{
 		VkDescriptorPoolSize{
 			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = 2 * 1 * per_texture, // two descriptors per set, one set per texture; binding 0 texture, binding 1 env cubemap
+			.descriptorCount = 3 * 1 * per_texture, // 3 descriptors per set, one set per texture; binding 0 texture, binding 1 env cubemap
 		},
 	};
 
@@ -1407,25 +1505,36 @@ void Tutorial::make_texture_descriptor_sets()
 		.descriptorSetCount = 1,
 		.pSetLayouts = &scenes_pipeline.set2_TEXTURE,
 	};
-	texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
+	size_t texture_descriptor_size = s72_scene.material_textureindex_map.size();
+	// auto size = textures.size(); // previous version
+	texture_descriptors.assign(texture_descriptor_size, VK_NULL_HANDLE);
 	for (VkDescriptorSet &descriptor_set : texture_descriptors)
 	{
 		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set));
 	}
 
 	// write descriptors for textures:
-	std::vector<VkDescriptorImageInfo> texture_infos(textures.size());
-	std::vector<VkDescriptorImageInfo> cubemap_infos(textures.size()); // For cubemap textures
-	std::vector<VkWriteDescriptorSet> writes(textures.size() * 2);	   // 2 writes per texture
+	std::vector<VkDescriptorImageInfo> texture_infos(texture_descriptor_size);
+	std::vector<VkDescriptorImageInfo> cubemap_infos(texture_descriptor_size); // For cubemap textures
+	std::vector<VkDescriptorImageInfo> normalmap_infos(texture_descriptor_size);
+	std::vector<VkWriteDescriptorSet> writes(texture_descriptor_size * 3); // 3 writes per texture
 
-	for (Helpers::AllocatedImage const &image : textures)
+	size_t i = 0;
+	for (auto it = s72_scene.material_textureindex_map.begin(); it != s72_scene.material_textureindex_map.end(); it++)
+	// for (Helpers::AllocatedImage const &image : textures)
 	{
-		size_t i = &image - &textures[0];
+		// size_t
+		// i = &image - &textures[0];
+		std::vector<int> texture_indexes = it->second;
+		assert(texture_indexes.size() == 3);
+
+		// bind to material_descriptor_index_map
+		s72_scene.material_descriptor_index_map[it->first] = (int)i;
 
 		// Regular texture
 		texture_infos[i] = VkDescriptorImageInfo{
 			.sampler = texture_sampler,
-			.imageView = texture_views[i],
+			.imageView = texture_views[texture_indexes[0]],
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		};
 
@@ -1436,8 +1545,28 @@ void Tutorial::make_texture_descriptor_sets()
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		};
 
+		// normalmap texture
+		if (texture_indexes[1] >= 0)
+		{
+			assert(texture_views[texture_indexes[1]] != VK_NULL_HANDLE);
+			normalmap_infos[i] = VkDescriptorImageInfo{
+				.sampler = texture_sampler,
+				.imageView = texture_views[texture_indexes[1]],
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+		}
+		else
+		{
+			assert(flat_normal_view != VK_NULL_HANDLE);
+			normalmap_infos[i] = VkDescriptorImageInfo{
+				.sampler = texture_sampler,
+				.imageView = flat_normal_view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+		}
+
 		// Write for regular texture (binding = 0)
-		writes[i * 2] = VkWriteDescriptorSet{
+		writes[i * 3] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = texture_descriptors[i],
 			.dstBinding = 0, // Binding 0 for regular texture
@@ -1448,7 +1577,7 @@ void Tutorial::make_texture_descriptor_sets()
 		};
 
 		// Write for cubemap texture (binding = 1)
-		writes[i * 2 + 1] = VkWriteDescriptorSet{
+		writes[i * 3 + 1] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = texture_descriptors[i],
 			.dstBinding = 1, // Binding 1 for cubemap texture
@@ -1457,6 +1586,19 @@ void Tutorial::make_texture_descriptor_sets()
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.pImageInfo = &cubemap_infos[i],
 		};
+
+		// Write for normal (binding = 2)
+		writes[i * 3 + 2] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[i],
+			.dstBinding = 2, // Binding 2 for normal
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &normalmap_infos[i],
+		};
+
+		i++;
 	}
 
 	vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);

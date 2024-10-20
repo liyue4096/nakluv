@@ -52,7 +52,7 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
     }
 
     { // the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader:
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -60,6 +60,11 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
             VkDescriptorSetLayoutBinding{
                 .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            VkDescriptorSetLayoutBinding{
+                .binding = 2,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},

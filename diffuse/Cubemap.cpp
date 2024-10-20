@@ -92,8 +92,8 @@ glm::vec3 Cubemap::get_dir(int face_index, int row, int col, int width, int heig
     glm::vec3 dir;
 
     // Convert pixel coordinates to range [0, 1]
-    float u = (row + 0.5f) / width;
-    float v = (col + 0.5f) / height;
+    float u = (col + 0.5f) / width;
+    float v = (row + 0.5f) / height;
 
     // Map [0, 1] to [-1, 1]
     float u_cubemap = 2.0f * u - 1.0f;

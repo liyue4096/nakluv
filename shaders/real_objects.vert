@@ -29,12 +29,25 @@ layout(location=0) out vec3 position;
 layout(location=1) out vec3 normal;
 layout(location=2) out vec4 tangent;
 layout(location=3) out vec2 texCoord;
+layout(location=4) out mat3 TBN;  // Output the TBN matrix to fragment shader
 
 void main() {
+    // Position transformation
     gl_Position = TRANSFORMS[gl_InstanceIndex].CLIP_FROM_LOCAL * vec4(Position, 1.0);
     position = mat4x3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL) * vec4(Position, 1.0);;
+    
+    // Normal transformation
     normal = mat3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL_NORMAL) * Normal;
+    
+    // Tangent transformation and bitangent calculation
     tangent = vec4(mat3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL_TANGENT) * Tangent.xyz, Tangent.w);
+    vec3 worldTangent = mat3(TRANSFORMS[gl_InstanceIndex].WORLD_FROM_LOCAL_TANGENT) * Tangent.xyz;
+    vec3 worldBitangent = cross(normal, worldTangent) * Tangent.w;
+
+    // Construct TBN matrix and pass it to fragment shader
+    TBN = mat3(worldTangent, worldBitangent, normal);
+    
+    // Pass the texture coordinates
     texCoord = TexCoord;
 
 
