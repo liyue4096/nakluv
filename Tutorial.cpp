@@ -1677,7 +1677,7 @@ void Tutorial::setup_texture_descriptor_pool()
 	};
 
 	VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool));
-	printf("setup_texture_descriptor_pool...done\n");
+	// printf("setup_texture_descriptor_pool...done\n");
 }
 
 void Tutorial::make_texture_descriptor_sets()
@@ -1690,17 +1690,17 @@ void Tutorial::make_texture_descriptor_sets()
 		.descriptorSetCount = 1,
 		.pSetLayouts = &scenes_pipeline.set2_TEXTURE,
 	};
-	printf("111");
+
 	size_t texture_descriptor_size = s72_scene.material_textureindex_map.size();
-	printf("  %zd, ", texture_descriptor_size);
-	// auto size = textures.size(); // previous version
+	// printf("  %zd, ", texture_descriptor_size);
+	//  auto size = textures.size(); // previous version
 	texture_descriptors.assign(texture_descriptor_size + 1, VK_NULL_HANDLE);
-	printf("222 ");
+
 	for (VkDescriptorSet &descriptor_set : texture_descriptors)
 	{
 		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set));
 	}
-	printf("222 ");
+
 	// write descriptors for textures:
 	// the last one is designed for default env and mirror
 	std::vector<VkDescriptorImageInfo> texture_infos(texture_descriptor_size + 1);
@@ -1709,7 +1709,7 @@ void Tutorial::make_texture_descriptor_sets()
 	std::vector<VkDescriptorImageInfo> dispmap_infos(texture_descriptor_size + 1);
 	std::vector<VkWriteDescriptorSet> writes((texture_descriptor_size + 1) * 4); // 4 writes per texture
 
-	printf("loop through  material_textureindex_map:\n");
+	// printf("loop through  material_textureindex_map:\n");
 	size_t i = 0;
 	for (auto it = s72_scene.material_textureindex_map.begin(); it != s72_scene.material_textureindex_map.end(); it++)
 	// for (Helpers::AllocatedImage const &image : textures)
