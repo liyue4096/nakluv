@@ -9,7 +9,7 @@ struct Cubemap
     std::string in_map_str = "";
     std::string out_map_str = "";
 
-    int N = 16;
+    int N = 32;
     int in_width, in_height;
     int out_width = N, out_height = N;
 
@@ -37,6 +37,8 @@ struct Cubemap
 
     // for a specific dir, make cos weight hemisphere_intergral
     glm::vec3 cos_hemisphere_intergral(glm::vec3 dir);
+
+    glm::vec3 one_pixel_sample(int sample_face, int sample_row, int sample_col);
 
     glm::vec3 decodeRGBE(const unsigned char *rgbe);
     void encodeRGBE(glm::vec3 rgb, unsigned char *rgbe);

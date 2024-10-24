@@ -790,10 +790,10 @@ void scene_workflow(sejp::value &val)
         get_scene(array);
     }
 
-    // step1.5: add default material
+    // step1.5: add default lambertian material
     LambertianMaterial lamber = LambertianMaterial::LambertianMaterial();
     MaterialObject material_obj{
-        .name = "default_material",
+        .name = "default_lambertian",
         .type = LAMBERTIAN,
         .material = lamber,
     };
@@ -813,7 +813,7 @@ void scene_workflow(sejp::value &val)
     }
 
     // debug msg
-    print_s72();
+    // print_s72();
 }
 
 void make_user_camera()

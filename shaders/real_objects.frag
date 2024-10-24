@@ -76,6 +76,8 @@ void main() {
         n = normalize(TBN[2]);  // TBN[2] is the interpolated normal
     }
 
+	vec3 envColor = decodeRGBE(texture(TEXTURE_CUBEMAP, n));
+
 	if (materialType.type == ENVIRONMENT) {
         // cubemap
         vec4 cubemapColor = texture(TEXTURE_CUBEMAP, n);
@@ -86,29 +88,42 @@ void main() {
 		return;
     } 
 	else if(materialType.type == MIRROR){
-		//reflectDir.y = -reflectDir.y; // Flip the Y-axis for correct reflections
+		reflectDir.z = -reflectDir.z; // Flip the Z-axis for correct reflections
     	vec4 reflectionColor = texture(TEXTURE_CUBEMAP, reflectDir);
     	albedo = decodeRGBE(reflectionColor);
+		// albedo = toneMapReinhard(albedo);
 		outColor = vec4(energy * albedo, 1.0);
 		return;
-		//albedo = toneMapReinhard(albedo);
 	}
 	else if(materialType.type == LAMBERTIAN){
 		if(materialType.src_albedo == 0){
 			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+			vec3 diffuseLight = envColor * albedo;
+			outColor = vec4(diffuseLight, alpha);
+			return;
 		}
 		else{
 			albedo = texture(TEXTURE, texCoord).rgb;
 			alpha = texture(TEXTURE, texCoord).a;
+			vec3 diffuseLight = envColor * albedo;
+			outColor = vec4(diffuseLight, alpha);
+			//outColor = vec4(energy * albedo, alpha);
+			return;
 		}
 	}
 	else {
         if(materialType.src_albedo == 0){
 			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+			vec3 diffuseLight = envColor * albedo;
+			outColor = vec4(diffuseLight, alpha);
+			return;
 		}
 		else{
 			albedo = texture(TEXTURE, texCoord).rgb;
 			alpha = texture(TEXTURE, texCoord).a;
+			vec3 diffuseLight = envColor * albedo;
+			outColor = vec4(diffuseLight, alpha);
+			return;
 		}
     }
 

@@ -1,9 +1,11 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "Cubemap.h"
 
+#include <array>
 #include <iostream>
 #include <algorithm>
 #include <cassert>
+#include <execution> // Include execution policies for parallelism
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../include/stb/stb_image_write.h"
@@ -65,6 +67,14 @@ void Cubemap::setup_in_faces()
         in_faces[i] = new stbi_uc[per_h * w * n];
         memcpy(in_faces[i], image_data + i * per_h * w * n, per_h * w * n);
     }
+
+    // code for testing displacement
+    //  filename = "./resource/wood_floor_deck_disp_1k.png";
+    //  ok = stbi_info(filename.c_str(), &w, &h, &n);
+    //  std::cout << "disp: " << filename.c_str() << " ok? " << ok << ": " << w << ", " << h << ", " << n << "\n";
+    //  image_data = stbi_load(filename.c_str(), &w, &h, &n, 0);
+
+    // printf("wood_floor_deck_disp_1k: %d, %d, %d, %d\n", image_data[0], image_data[10 * 1024], image_data[20 * 1024], image_data[30 * 1024]);
 }
 
 void Cubemap::write_image()
@@ -72,7 +82,7 @@ void Cubemap::write_image()
     std::string filename = "./resource/" + out_map_str;
     // for (int i = 0; i < 6; i++)
     {
-        int rlt = stbi_write_png(filename.c_str(), out_width, out_height * 6, 4, out_faces[0], 4);
+        int rlt = stbi_write_png(filename.c_str(), out_width, out_height * 6, 4, out_faces[0], out_width * 4);
         std::cout << "write out image " << ": " << rlt << std::endl;
     }
 }
@@ -107,11 +117,11 @@ glm::vec3 Cubemap::get_dir(int face_index, int row, int col, int width, int heig
     case 1: // -X
         dir = glm::vec3(-1.0f, -v_cubemap, u_cubemap);
         break;
-    case 2:                                           // +Y
-        dir = glm::vec3(u_cubemap, 1.0f, -v_cubemap); // Y is up, flip v_cubemapz
+    case 2:
+        dir = glm::vec3(u_cubemap, 1.0f, v_cubemap);
         break;
     case 3: // -Y
-        dir = glm::vec3(u_cubemap, -1.0f, v_cubemap);
+        dir = glm::vec3(u_cubemap, -1.0f, -v_cubemap);
         break;
     case 4: // +Z
         dir = glm::vec3(u_cubemap, -v_cubemap, 1.0f);
@@ -126,7 +136,23 @@ glm::vec3 Cubemap::get_dir(int face_index, int row, int col, int width, int heig
     }
 
     // Normalize the direction vector
-    return glm::normalize(dir);
+    return dir;
+    // return glm::normalize(dir);
+}
+
+glm::vec3 Cubemap::one_pixel_sample(int sample_face, int sample_row, int sample_col)
+{
+    int target_row = sample_row * in_height / out_height;
+    int target_col = sample_col * in_width / out_width;
+
+    printf("%d: %d, %d \n", sample_face, target_row, target_col);
+
+    // pick up the specific pixel of in_image
+    // Get the pixel data from the cubemap face (RGBE encoded)
+    unsigned char *pixel = &in_faces[sample_face][(target_row * in_width + target_col) * 4]; // RGBE, 4 channels
+
+    // Decode the RGBE data into linear RGB
+    return decodeRGBE(pixel);
 }
 
 glm::vec3 Cubemap::cos_hemisphere_intergral(glm::vec3 dir)
@@ -136,15 +162,17 @@ glm::vec3 Cubemap::cos_hemisphere_intergral(glm::vec3 dir)
 
     for (int sample_face = 0; sample_face < 6; ++sample_face)
     {
-        for (int sample_row = 0; sample_row < in_width; ++sample_row)
+        for (int sample_row = 0; sample_row < in_height; ++sample_row)
         {
-            for (int sample_col = 0; sample_col < in_height; ++sample_col)
+            for (int sample_col = 0; sample_col < in_width; ++sample_col)
             {
                 glm::vec3 sample_dir = get_dir(sample_face, sample_row, sample_col, in_width, in_height);
 
                 // Calculate the weight: cos(theta) = max(dot(N, sample_dir), 0.0)
                 float weight = glm::dot(glm::normalize(dir), glm::normalize(sample_dir));
                 weight = std::max(weight, 0.0f); // Cosine-weight, only take positive contribution
+                if (weight <= 0.0001f)
+                    continue;
 
                 // Sample the input cubemap using sample_dir
                 glm::vec3 sample_color = sample_cubemap(sample_face, sample_row, sample_col, in_width, in_height);
@@ -164,7 +192,7 @@ glm::vec3 Cubemap::cos_hemisphere_intergral(glm::vec3 dir)
     // Normalize the result by the total accumulated weight
     if (weight_sum > 0.0f)
     {
-        // result /= weight_sum;
+        result /= weight_sum;
     }
 
     // Divide by Pi for Lambertian reflection
@@ -208,8 +236,8 @@ glm::vec3 Cubemap::decodeRGBE(const unsigned char *rgbe)
     // Convert the RGBE values to floating-point RGB
     return glm::vec3(
         (rgbe[0] + 0.5f / 256.0f) * scale,
-        (rgbe[1] + 0.5f / 255.0f) * scale,
-        (rgbe[2] + 0.5f / 255.0f) * scale);
+        (rgbe[1] + 0.5f / 256.0f) * scale,
+        (rgbe[2] + 0.5f / 256.0f) * scale);
 }
 
 void Cubemap::encodeRGBE(glm::vec3 rgb, unsigned char *rgbe)
@@ -240,21 +268,24 @@ void Cubemap::work_flow()
 
     setup_out_faces();
 
-    for (int face_index = 0; face_index < 6; ++face_index)
-    {
-        for (int row = 0; row < out_width; ++row)
+    std::array<int, 6> face_indices = {0, 1, 2, 3, 4, 5};
+
+    // for (int face_index = 0; face_index < 6; ++face_index)
+    std::for_each(std::execution::par, face_indices.begin(), face_indices.end(), [&](int face_index)
+                  {
+        for (int row = 0; row < out_height; ++row)
         {
-            for (int col = 0; col < out_height; ++col)
+            for (int col = 0; col < out_width; ++col)
             {
                 auto out_dir = get_dir(face_index, row, col, out_width, out_height);
+
                 auto out_pixel = cos_hemisphere_intergral(out_dir);
 
-                unsigned char *out_pixel_location = out_faces[face_index] + (row * out_height + col) * 4;
+                unsigned char *out_pixel_location = out_faces[face_index] + (row * out_width + col) * 4;
 
                 encodeRGBE(out_pixel, out_pixel_location);
             }
-        }
-    }
+        } });
 
     write_image();
 }

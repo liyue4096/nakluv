@@ -20,6 +20,8 @@ size_t Helpers::get_bytes_per_pixel(VkFormat format)
 	case VK_FORMAT_R8G8B8A8_UNORM:
 	case VK_FORMAT_R8G8B8A8_SRGB:
 		return 4;
+	case VK_FORMAT_R8_UNORM:
+		return 1;
 	default:
 		std::cerr << "Unsupported format or unhandled format specified!" << std::endl;
 		return 0;

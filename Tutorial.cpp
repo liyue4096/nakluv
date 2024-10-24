@@ -111,11 +111,16 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		make_default_normal();
 		setup_normal_views_sample();
+
+		make_default_disp();
+		setup_disp_views_sample();
+		printf("make some textures...done\n");
 	}
 
 	setup_texture_descriptor_pool();
 
 	make_texture_descriptor_sets();
+	printf("make_texture_descriptor_sets...done\n");
 
 	start = std::chrono::high_resolution_clock::now();
 	end = std::chrono::high_resolution_clock::now();
@@ -173,6 +178,40 @@ Tutorial::~Tutorial()
 	if (Scene_env.handle)
 	{
 		rtg.helpers.destroy_image(std::move(Scene_env));
+	}
+
+	if (Lamber_env_view)
+	{
+		vkDestroyImageView(rtg.device, Lamber_env_view, nullptr);
+		Lamber_env_view = VK_NULL_HANDLE;
+	}
+
+	if (Lamber_env.handle)
+	{
+		rtg.helpers.destroy_image(std::move(Lamber_env));
+	}
+
+	if (disp_sampler)
+	{
+		vkDestroySampler(rtg.device, disp_sampler, nullptr);
+		disp_sampler = VK_NULL_HANDLE;
+	}
+
+	if (flat_disp_view)
+	{
+		vkDestroyImageView(rtg.device, flat_disp_view, nullptr);
+		flat_disp_view = VK_NULL_HANDLE;
+	}
+
+	if (flat_disp_map.handle)
+	{
+		rtg.helpers.destroy_image(std::move(flat_disp_map));
+	}
+
+	if (normal_sampler)
+	{
+		vkDestroySampler(rtg.device, normal_sampler, nullptr);
+		normal_sampler = VK_NULL_HANDLE;
 	}
 
 	if (flat_normal_view)
@@ -612,7 +651,8 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 			{
 				uint32_t index = uint32_t(&inst - &scene_instances[0]);
 
-				int texture_descriptor_index = 0;
+				// set default be the last one descriptor set, set in void Toturial::make_texture_descriptor_sets();
+				auto texture_descriptor_index = s72_scene.material_descriptor_index_map.size();
 
 				if (s72_scene.material_descriptor_index_map.find(inst.material_) != s72_scene.material_descriptor_index_map.end())
 					texture_descriptor_index = s72_scene.material_descriptor_index_map[inst.material_];
@@ -1227,8 +1267,32 @@ void Tutorial::setup_environ()
 	std::cout << " success\n";
 
 	// transfer data:
-	rtg.helpers.transfer_to_cubemap_image(image_data, w * h * n, Scene_env); /// todo modify it
+	rtg.helpers.transfer_to_cubemap_image(image_data, w * h * n, Scene_env); //
 
+	stbi_image_free(image_data);
+
+	// read lamber_env if png exist
+	std::string &env_file = s72_scene.environment.radiance.src;
+	std::string lamber_env = "./resource/" + env_file.substr(0, env_file.size() - 4) + ".lambertian.png";
+	printf("lamber_env: %s\n", lamber_env.c_str());
+
+	ok = stbi_info(lamber_env.c_str(), &w, &h, &n);
+	if (ok != 1)
+		return;
+
+	image_data = stbi_load(lamber_env.c_str(), &w, &h, &n, 0);
+	per_h = h / 6;
+
+	Lamber_env = rtg.helpers.create_cubemap_image(
+		VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)per_h}, // size of image
+		VK_FORMAT_R8G8B8A8_UNORM,									 // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+		Helpers::Unmapped);
+
+	rtg.helpers.transfer_to_cubemap_image(image_data, w * h * n, Lamber_env);
+	printf("make up lamber_env success: w=%d, h=%d, n=%d\n", w, h, n);
 	stbi_image_free(image_data);
 }
 
@@ -1286,6 +1350,21 @@ void Tutorial::make_default_normal()
 	rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), flat_normal_map);
 }
 
+void Tutorial::make_default_disp()
+{
+	uint8_t data = 1;
+
+	flat_disp_map = rtg.helpers.create_image(
+		VkExtent2D{.width = 1, .height = 1}, // size of image
+		VK_FORMAT_R8_UNORM,					 // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+		Helpers::Unmapped);
+
+	rtg.helpers.transfer_to_image((void *)&data, sizeof(data), flat_disp_map);
+}
+
 void Tutorial::setup_env_views_sample()
 {
 	{ // make image views for the textures
@@ -1330,6 +1409,29 @@ void Tutorial::setup_env_views_sample()
 		};
 		VK(vkCreateSampler(rtg.device, &create_info, nullptr, &Scene_env_sampler));
 	}
+
+	if (Lamber_env.handle != VK_NULL_HANDLE)
+	{
+		{ // make image views for the textures
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = Lamber_env.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+				.format = Lamber_env.format,
+				// .components sets swizzling and is fine when zero-initialized
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 6,
+				},
+			};
+
+			VK(vkCreateImageView(rtg.device, &create_info, nullptr, &Lamber_env_view));
+		}
+	}
 }
 
 void Tutorial::load_scene_object_textures()
@@ -1349,8 +1451,21 @@ void Tutorial::load_scene_object_textures()
 			std::vector<uint8_t> rgba_data;
 
 			if (n == 1)
-			{ // displacement omit it at this stage
+			{
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)h}, // size of image
+					VK_FORMAT_R8_UNORM,										 // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+					Helpers::Unmapped));
+
+				rtg.helpers.transfer_to_image(image_data, w * h * n, textures.back());
+
 				stbi_image_free(image_data);
+
+				// bind textures index
+				s72_scene.textures_src_index_map[t_src] = (uint32_t)textures.size() - 1;
 				continue;
 			}
 
@@ -1429,9 +1544,9 @@ void Tutorial::setup_views_sample()
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.flags = 0,
-			.magFilter = VK_FILTER_NEAREST,
-			.minFilter = VK_FILTER_NEAREST,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -1441,7 +1556,7 @@ void Tutorial::setup_views_sample()
 			.compareEnable = VK_FALSE,
 			.compareOp = VK_COMPARE_OP_ALWAYS, // doesn't matter if compare isn't enabled
 			.minLod = 0.0f,
-			.maxLod = 0.0f,
+			.maxLod = 5.0f,
 			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
 			.unnormalizedCoordinates = VK_FALSE,
 		};
@@ -1451,25 +1566,94 @@ void Tutorial::setup_views_sample()
 
 void Tutorial::setup_normal_views_sample()
 {
-	VkImageViewCreateInfo create_info{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.flags = 0,
-		.image = flat_normal_map.handle,
-		.viewType = VK_IMAGE_VIEW_TYPE_2D,
-		.format = flat_normal_map.format,
-		// .components sets swizzling and is fine when zero-initialized
-		.subresourceRange{
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.baseMipLevel = 0,
-			.levelCount = 1,
-			.baseArrayLayer = 0,
-			.layerCount = 1,
-		},
-	};
+	{ // make image views for the normal map
+		VkImageViewCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.flags = 0,
+			.image = flat_normal_map.handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = flat_normal_map.format,
+			// .components sets swizzling and is fine when zero-initialized
+			.subresourceRange{
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
 
-	VK(vkCreateImageView(rtg.device, &create_info, nullptr, &flat_normal_view));
+		VK(vkCreateImageView(rtg.device, &create_info, nullptr, &flat_normal_view));
+	}
 
-	// use texture sampler for the normal
+	{ // make a sampler for the normal map
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.mipLodBias = 0.0f,
+			.anisotropyEnable = VK_FALSE,
+			.maxAnisotropy = 0.0f, // doesn't matter if anisotropy isn't enabled
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS, // doesn't matter if compare isn't enabled
+			.minLod = 0.0f,
+			.maxLod = 5.0f,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK(vkCreateSampler(rtg.device, &create_info, nullptr, &normal_sampler));
+	}
+}
+
+void Tutorial::setup_disp_views_sample()
+{
+	{ // make image views for the normal map
+		VkImageViewCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.flags = 0,
+			.image = flat_disp_map.handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = flat_disp_map.format,
+			// .components sets swizzling and is fine when zero-initialized
+			.subresourceRange{
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+
+		VK(vkCreateImageView(rtg.device, &create_info, nullptr, &flat_disp_view));
+	}
+
+	{ // make a sampler for the normal map
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.mipLodBias = 0.0f,
+			.anisotropyEnable = VK_FALSE,
+			.maxAnisotropy = 0.0f, // doesn't matter if anisotropy isn't enabled
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS, // doesn't matter if compare isn't enabled
+			.minLod = 0.0f,
+			.maxLod = 5.0f,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK(vkCreateSampler(rtg.device, &create_info, nullptr, &disp_sampler));
+	}
 }
 
 void Tutorial::setup_texture_descriptor_pool()
@@ -1480,19 +1664,20 @@ void Tutorial::setup_texture_descriptor_pool()
 	std::array<VkDescriptorPoolSize, 1> pool_sizes{
 		VkDescriptorPoolSize{
 			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = 3 * 1 * per_texture, // 3 descriptors per set, one set per texture; binding 0 texture, binding 1 env cubemap
+			.descriptorCount = 4 * 1 * per_texture, // 4 descriptors per set, one set per texture; binding 0 texture, binding 1 env cubemap
 		},
 	};
 
 	VkDescriptorPoolCreateInfo create_info{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.flags = 0,					// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
-		.maxSets = 1 * per_texture, // one set per texture
+		.maxSets = 2 * per_texture, // one set per texture **why i have adjust to 2 instead of 1**
 		.poolSizeCount = uint32_t(pool_sizes.size()),
 		.pPoolSizes = pool_sizes.data(),
 	};
 
 	VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool));
+	printf("setup_texture_descriptor_pool...done\n");
 }
 
 void Tutorial::make_texture_descriptor_sets()
@@ -1505,26 +1690,34 @@ void Tutorial::make_texture_descriptor_sets()
 		.descriptorSetCount = 1,
 		.pSetLayouts = &scenes_pipeline.set2_TEXTURE,
 	};
+	printf("111");
 	size_t texture_descriptor_size = s72_scene.material_textureindex_map.size();
+	printf("  %zd, ", texture_descriptor_size);
 	// auto size = textures.size(); // previous version
-	texture_descriptors.assign(texture_descriptor_size, VK_NULL_HANDLE);
+	texture_descriptors.assign(texture_descriptor_size + 1, VK_NULL_HANDLE);
+	printf("222 ");
 	for (VkDescriptorSet &descriptor_set : texture_descriptors)
 	{
 		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set));
 	}
-
+	printf("222 ");
 	// write descriptors for textures:
-	std::vector<VkDescriptorImageInfo> texture_infos(texture_descriptor_size);
-	std::vector<VkDescriptorImageInfo> cubemap_infos(texture_descriptor_size); // For cubemap textures
-	std::vector<VkDescriptorImageInfo> normalmap_infos(texture_descriptor_size);
-	std::vector<VkWriteDescriptorSet> writes(texture_descriptor_size * 3); // 3 writes per texture
+	// the last one is designed for default env and mirror
+	std::vector<VkDescriptorImageInfo> texture_infos(texture_descriptor_size + 1);
+	std::vector<VkDescriptorImageInfo> cubemap_infos(texture_descriptor_size + 1); // For cubemap textures
+	std::vector<VkDescriptorImageInfo> normalmap_infos(texture_descriptor_size + 1);
+	std::vector<VkDescriptorImageInfo> dispmap_infos(texture_descriptor_size + 1);
+	std::vector<VkWriteDescriptorSet> writes((texture_descriptor_size + 1) * 4); // 4 writes per texture
 
+	printf("loop through  material_textureindex_map:\n");
 	size_t i = 0;
 	for (auto it = s72_scene.material_textureindex_map.begin(); it != s72_scene.material_textureindex_map.end(); it++)
 	// for (Helpers::AllocatedImage const &image : textures)
 	{
 		// size_t
 		// i = &image - &textures[0];
+		MaterialType type = it->first->type;
+
 		std::vector<int> texture_indexes = it->second;
 		assert(texture_indexes.size() == 3);
 
@@ -1544,13 +1737,18 @@ void Tutorial::make_texture_descriptor_sets()
 			.imageView = Scene_env_view,  // Image view for the cubemap
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		};
+		if (type == LAMBERTIAN && Lamber_env_view)
+		{
+			printf("index %zd: lamber, %d, %d\n", i, texture_indexes[0], texture_indexes[1]);
+			cubemap_infos[i].imageView = Lamber_env_view;
+		}
 
 		// normalmap texture
 		if (texture_indexes[1] >= 0)
 		{
 			assert(texture_views[texture_indexes[1]] != VK_NULL_HANDLE);
 			normalmap_infos[i] = VkDescriptorImageInfo{
-				.sampler = texture_sampler,
+				.sampler = normal_sampler,
 				.imageView = texture_views[texture_indexes[1]],
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			};
@@ -1559,14 +1757,34 @@ void Tutorial::make_texture_descriptor_sets()
 		{
 			assert(flat_normal_view != VK_NULL_HANDLE);
 			normalmap_infos[i] = VkDescriptorImageInfo{
-				.sampler = texture_sampler,
+				.sampler = normal_sampler,
 				.imageView = flat_normal_view,
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			};
 		}
 
+		// displacement texture
+		if (texture_indexes[2] >= 0)
+		{
+			assert(texture_views[texture_indexes[2]] != VK_NULL_HANDLE);
+			dispmap_infos[i] = VkDescriptorImageInfo{
+				.sampler = disp_sampler,
+				.imageView = texture_views[texture_indexes[2]],
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+		}
+		else
+		{
+			assert(flat_disp_view != VK_NULL_HANDLE);
+			dispmap_infos[i] = VkDescriptorImageInfo{
+				.sampler = disp_sampler,
+				.imageView = flat_disp_view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+		}
+
 		// Write for regular texture (binding = 0)
-		writes[i * 3] = VkWriteDescriptorSet{
+		writes[i * 4] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = texture_descriptors[i],
 			.dstBinding = 0, // Binding 0 for regular texture
@@ -1577,7 +1795,7 @@ void Tutorial::make_texture_descriptor_sets()
 		};
 
 		// Write for cubemap texture (binding = 1)
-		writes[i * 3 + 1] = VkWriteDescriptorSet{
+		writes[i * 4 + 1] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = texture_descriptors[i],
 			.dstBinding = 1, // Binding 1 for cubemap texture
@@ -1588,7 +1806,7 @@ void Tutorial::make_texture_descriptor_sets()
 		};
 
 		// Write for normal (binding = 2)
-		writes[i * 3 + 2] = VkWriteDescriptorSet{
+		writes[i * 4 + 2] = VkWriteDescriptorSet{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = texture_descriptors[i],
 			.dstBinding = 2, // Binding 2 for normal
@@ -1598,7 +1816,94 @@ void Tutorial::make_texture_descriptor_sets()
 			.pImageInfo = &normalmap_infos[i],
 		};
 
+		// Write for disp (binding = 3)
+		writes[i * 4 + 3] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[i],
+			.dstBinding = 3, // Binding 3 for disp
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &dispmap_infos[i],
+		};
+
 		i++;
+	}
+
+	{ // the last one, for env and mirror type
+		// Regular texture
+		texture_infos[texture_descriptor_size] = VkDescriptorImageInfo{
+			.sampler = texture_sampler,
+			.imageView = texture_views[0], // default texture
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+
+		// Cubemap texture (assuming you have cubemap views and sampler set up)
+		cubemap_infos[texture_descriptor_size] = VkDescriptorImageInfo{
+			.sampler = Scene_env_sampler, // Cubemap-specific sampler
+			.imageView = Scene_env_view,  // Image view for the cubemap
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+
+		// normalmap texture
+		assert(flat_normal_view != VK_NULL_HANDLE);
+		normalmap_infos[texture_descriptor_size] = VkDescriptorImageInfo{
+			.sampler = normal_sampler,
+			.imageView = flat_normal_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+
+		// disp texture
+		assert(flat_disp_view != VK_NULL_HANDLE);
+		dispmap_infos[texture_descriptor_size] = VkDescriptorImageInfo{
+			.sampler = disp_sampler,
+			.imageView = flat_disp_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+
+		// Write for regular texture (binding = 0)
+		writes[texture_descriptor_size * 4] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[texture_descriptor_size],
+			.dstBinding = 0, // Binding 0 for regular texture
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &texture_infos[texture_descriptor_size],
+		};
+
+		// Write for cubemap texture (binding = 1)
+		writes[texture_descriptor_size * 4 + 1] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[texture_descriptor_size],
+			.dstBinding = 1, // Binding 1 for cubemap texture
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &cubemap_infos[texture_descriptor_size],
+		};
+
+		// Write for normal (binding = 2)
+		writes[texture_descriptor_size * 4 + 2] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[texture_descriptor_size],
+			.dstBinding = 2, // Binding 2 for normal
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &normalmap_infos[texture_descriptor_size],
+		};
+
+		// Write for disp (binding = 3)
+		writes[texture_descriptor_size * 4 + 3] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = texture_descriptors[texture_descriptor_size],
+			.dstBinding = 3, // Binding 3 for disp
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &dispmap_infos[texture_descriptor_size],
+		};
 	}
 
 	vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);

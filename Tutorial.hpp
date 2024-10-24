@@ -289,8 +289,16 @@ struct Tutorial : RTG::Application
 	VkImageView Scene_env_view;
 	VkSampler Scene_env_sampler = VK_NULL_HANDLE;
 
+	Helpers::AllocatedImage Lamber_env;
+	VkImageView Lamber_env_view;
+
 	Helpers::AllocatedImage flat_normal_map;
 	VkImageView flat_normal_view;
+	VkSampler normal_sampler = VK_NULL_HANDLE;
+
+	Helpers::AllocatedImage flat_disp_map;
+	VkImageView flat_disp_view;
+	VkSampler disp_sampler = VK_NULL_HANDLE;
 
 	struct MaterialTexture
 	{
@@ -321,10 +329,12 @@ struct Tutorial : RTG::Application
 	void make_default_environ();
 	void make_default_texture();
 	void make_default_normal();
+	void make_default_disp();
 	void load_scene_object_textures();
 	void setup_env_views_sample();
 	void setup_views_sample();
 	void setup_normal_views_sample();
+	void setup_disp_views_sample();
 
 	void setup_texture_descriptor_pool();
 	void make_texture_descriptor_sets();

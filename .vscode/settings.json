@@ -79,7 +79,11 @@
         "deque": "cpp",
         "random": "cpp",
         "cinttypes": "cpp",
-        "csignal": "cpp"
+        "csignal": "cpp",
+        "execution": "cpp",
+        "ranges": "cpp",
+        "numeric": "cpp",
+        "queue": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
