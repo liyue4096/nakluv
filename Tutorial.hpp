@@ -135,6 +135,7 @@ struct Tutorial : RTG::Application
 		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set3_Light = VK_NULL_HANDLE;
 
 		// types for descriptors:
 		struct World
@@ -172,6 +173,31 @@ struct Tutorial : RTG::Application
 		};
 		static_assert(sizeof(Transform) == 16 * 4 + 16 * 4 + 16 * 4 + 16 * 4, "Transform is the expected size.");
 
+		struct Light
+		{
+			struct LightObject
+			{
+				glm::vec3 tint = {1.f, 1.f, 1.f};
+				float padding = 0;
+				LightType type;
+				uint32_t shadow = 0;
+				float padding0[2] = {0.f, 0.f};
+				union
+				{
+					float data_lookup[6];
+					SunLight sun;
+					SphereLight sphere;
+					SpotLight spot;
+				} data;
+				float padding1[2] = {0.f, 0.f};
+
+			} light_obj;
+
+			glm::vec4 position;
+			glm::quat quaternion;
+			// glm::mat4 transform;
+		};
+
 		// push constants
 		struct Push
 		{
@@ -179,7 +205,11 @@ struct Tutorial : RTG::Application
 			int src_albedo = 0;
 			int src_roughness = 0;
 			int src_metalness = 0;
-			glm::vec3 albedo;
+			int src_env = 0;
+			int lights_size = 0;
+			int padding0;
+			int padding1;
+			glm::vec4 albedo = {0.8f, 0.8f, 0.8f, 1.0f};
 		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -251,6 +281,11 @@ struct Tutorial : RTG::Application
 		Helpers::AllocatedBuffer Scene_transforms;	   // device-local
 		VkDescriptorSet Scene_transforms_descriptors;  // references Transforms
 
+		// location for ScenesPipeline::Lights data
+		Helpers::AllocatedBuffer Scene_light_src; // host coherent; mapped
+		Helpers::AllocatedBuffer Scene_light;	  // device-local
+		VkDescriptorSet Scene_light_descriptors;  // references lightBuffer
+
 		// location for ScenesPipeline::Transforms data: (streamed to GPU per-frame)
 		Helpers::AllocatedBuffer Headless_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Headless;	   // device-local
@@ -286,18 +321,18 @@ struct Tutorial : RTG::Application
 	std::vector<SceneObject> scene_objects;
 
 	Helpers::AllocatedImage Scene_env;
-	VkImageView Scene_env_view;
+	VkImageView Scene_env_view = VK_NULL_HANDLE;
 	VkSampler Scene_env_sampler = VK_NULL_HANDLE;
 
 	Helpers::AllocatedImage Lamber_env;
-	VkImageView Lamber_env_view;
+	VkImageView Lamber_env_view = VK_NULL_HANDLE;
 
 	Helpers::AllocatedImage flat_normal_map;
-	VkImageView flat_normal_view;
+	VkImageView flat_normal_view = VK_NULL_HANDLE;
 	VkSampler normal_sampler = VK_NULL_HANDLE;
 
 	Helpers::AllocatedImage flat_disp_map;
-	VkImageView flat_disp_view;
+	VkImageView flat_disp_view = VK_NULL_HANDLE;
 	VkSampler disp_sampler = VK_NULL_HANDLE;
 
 	struct MaterialTexture
@@ -335,6 +370,7 @@ struct Tutorial : RTG::Application
 	void setup_views_sample();
 	void setup_normal_views_sample();
 	void setup_disp_views_sample();
+	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
 
 	void setup_texture_descriptor_pool();
 	void make_texture_descriptor_sets();

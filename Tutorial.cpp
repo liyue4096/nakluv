@@ -72,6 +72,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		set_scene_objects(vertices);
 		// load_vertex_from_b72(vertices);
+		print_s72();
 
 		size_t bytes = vertices.size() * sizeof(vertices[0]);
 
@@ -300,6 +301,14 @@ Tutorial::~Tutorial()
 		if (workspace.Scene_transforms.handle != VK_NULL_HANDLE)
 		{
 			rtg.helpers.destroy_buffer(std::move(workspace.Scene_transforms));
+		}
+		if (workspace.Scene_light_src.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_light_src));
+		}
+		if (workspace.Scene_light.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.Scene_light));
 		}
 		// Transforms_descriptors freed when pool is destroyed.
 	}
@@ -554,6 +563,110 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_transforms_src.handle, workspace.Scene_transforms.handle, 1, &copy_region);
 	}
 
+	if (!s72_scene.lights.empty())
+	{
+		// upload scene lights:
+		size_t needed_bytes = s72_scene.lights.size() * sizeof(ScenesPipeline::Light);
+		if (workspace.Scene_light_src.handle == VK_NULL_HANDLE || workspace.Scene_light_src.size < needed_bytes)
+		{
+			size_t new_bytes = ((needed_bytes + 192) / 192) * 192;
+			if (workspace.Scene_light_src.handle)
+			{
+				rtg.helpers.destroy_buffer(std::move(workspace.Scene_light_src));
+			}
+			if (workspace.Scene_light.handle)
+			{
+				rtg.helpers.destroy_buffer(std::move(workspace.Scene_light));
+			}
+
+			workspace.Scene_light_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+				Helpers::Mapped																// get a pointer to the memory
+			);
+			workspace.Scene_light = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								   // GPU-local memory
+				Helpers::Unmapped													   // don't get a pointer to the memory
+			);
+
+			// update the descriptor set:
+			VkDescriptorBufferInfo Lights_info{
+				.buffer = workspace.Scene_light.handle,
+				.offset = 0,
+				.range = workspace.Scene_light.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 1> writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Scene_light_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Lights_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
+				0, nullptr								// descriptorCopies count, data
+			);
+
+			std::cout << "Re-allocated scene light buffers to " << new_bytes << " bytes." << std::endl;
+		}
+		assert(workspace.Scene_light_src.size == workspace.Scene_light.size);
+		assert(workspace.Scene_light_src.size >= needed_bytes);
+
+		// Map the host-visible buffer to copy data
+		assert(workspace.Scene_light_src.allocation.mapped);																 // Ensure mapped pointer is available
+		ScenesPipeline::Light *out = reinterpret_cast<ScenesPipeline::Light *>(workspace.Scene_light_src.allocation.data()); // Map buffer
+
+		// Copy the lights data to the mapped memory
+		for (LightObject &light : s72_scene.lights)
+		{
+			if (s72_scene.light_node_map.find(&light) != s72_scene.light_node_map.end())
+			{
+				Node *node_ = s72_scene.light_node_map[&light];
+				auto transform = s72_scene.transforms[node_];
+				out->light_obj.tint = light.tint;
+				out->light_obj.type = light.type;
+				// printf("Type: %d ", out->light_obj.type);
+
+				if (out->light_obj.type == SUN)
+				{
+					out->light_obj.data.sun = light.data.sun;
+				}
+				else if (out->light_obj.type == SPHERE)
+				{
+					out->light_obj.data.sphere = light.data.sphere;
+				}
+				else if (out->light_obj.type == SPOT)
+				{
+					out->light_obj.data.spot = light.data.spot;
+				}
+
+				out->light_obj.shadow = light.shadow;
+
+				out->position = transform[3];
+				out->quaternion = extract_rotation_quaternion(transform);
+			}
+			++out;
+		}
+
+		// device-side copy
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Scene_light_src.handle, workspace.Scene_light.handle, 1, &copy_region);
+	}
+
 	{ // memory barrier to make sure copies complete before rendering happens:
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -667,12 +780,30 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 					0, nullptr										   // dynamic offsets count, ptr
 				);
 
+				// bind lights descriptor set:
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,			   // command buffer
+					VK_PIPELINE_BIND_POINT_GRAPHICS,	   // pipeline bind point
+					scenes_pipeline.layout,				   // pipeline layout
+					3,									   // third set
+					1, &workspace.Scene_light_descriptors, // descriptor sets count, ptr
+					0, nullptr							   // dynamic offsets count, ptr
+				);
+
 				{ // push materialType:
-					// std::cout << "PUSH: " << inst.material_->type;
+					// std::cout << "lights_size: " << s72_scene.lights.size();
 
 					ScenesPipeline::Push push{
 						.materialType = inst.material_->type,
+						.lights_size = (int)s72_scene.lights.size(),
 					};
+
+					if (s72_scene.environment.name != "")
+					{
+						push.src_env = 1;
+					}
+					else
+						push.src_env = 0;
 
 					if (inst.material_->type == LAMBERTIAN && std::holds_alternative<LambertianMaterial>(inst.material_->material))
 					{
@@ -849,6 +980,13 @@ void Tutorial::update(float dt)
 					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
 
 					CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
+
+					glm::vec3 eye_world_position = glm::vec3(camera_node_->make_local_to_world() * glm::vec4(0.f, 0.f, 0.f, 1.0f));
+
+					// update eye position
+					world.EYE.x = eye_world_position.x;
+					world.EYE.y = eye_world_position.y;
+					world.EYE.z = eye_world_position.z;
 				}
 			}
 
@@ -1170,6 +1308,18 @@ void Tutorial::setup_workspaces()
 			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
+		{ // allocate descriptor set for lights descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &scenes_pipeline.set3_Light,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Scene_light_descriptors));
+			// NOTE: will fill in this descriptor set in render when buffers are [re-]allocated
+		}
+
 		{ // point descriptor to buffer:
 			VkDescriptorBufferInfo Camera_info{
 				.buffer = workspace.Camera.handle,
@@ -1300,25 +1450,34 @@ void Tutorial::make_default_environ()
 {
 	{ // texture 0 will be a dark grey / light grey checkerboard with a red square at the origin.
 		// actually make the texture:
-		uint32_t size = 128;
+		uint32_t size = 1;
 
 		std::vector<uint32_t> data;
 		data.reserve(size * 6 * size);
-		for (uint32_t y = 0; y < 6 * size; ++y)
+		// for (uint32_t y = 0; y < 6 * size; ++y)
+		// {
+		// 	for (uint32_t x = 0; x < size; ++x)
+		// 	{
+		// 		uint32_t square_size = 64; // Size of each square
+		// 		bool is_light_gray = ((x / square_size) % 2 == (y / square_size) % 2);
+
+		// 		// Gray and light gray values
+		// 		uint8_t gray = is_light_gray ? 192 : 128; // Light gray (192) and regular gray (128)
+		// 		uint8_t a = 0xff;						  // Fully opaque alpha channel
+
+		// 		// Set r, g, b to the same value for grayscale
+		// 		data.emplace_back(uint32_t(gray) | (uint32_t(gray) << 8) | (uint32_t(gray) << 16) | (uint32_t(a) << 24));
+		// 	}
+		// }
+		for (uint32_t i = 0; i < size * 6; i++)
 		{
-			for (uint32_t x = 0; x < size; ++x)
-			{
-				uint32_t square_size = 64; // Size of each square
-				bool is_light_gray = ((x / square_size) % 2 == (y / square_size) % 2);
-
-				// Gray and light gray values
-				uint8_t gray = is_light_gray ? 255 : 128; // Light gray (192) and regular gray (128)
-				uint8_t a = 0xff;						  // Fully opaque alpha channel
-
-				// Set r, g, b to the same value for grayscale
-				data.emplace_back(uint32_t(gray) | (uint32_t(gray) << 8) | (uint32_t(gray) << 16) | (uint32_t(a) << 24));
-			}
+			uint8_t r = 0xff;
+			uint8_t g = 0xff;
+			uint8_t b = 0xff;
+			uint8_t e = 143;
+			data.emplace_back((uint32_t(r) << 24) | (uint32_t(g) << 16) | (uint32_t(b) << 8) | uint32_t(e));
 		}
+
 		assert(data.size() == size * 6 * size);
 
 		// make a place for the texture to live on the GPU:
@@ -1391,8 +1550,8 @@ void Tutorial::setup_env_views_sample()
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.flags = 0,
-			.magFilter = VK_FILTER_LINEAR,
-			.minFilter = VK_FILTER_LINEAR,
+			.magFilter = VK_FILTER_NEAREST,
+			.minFilter = VK_FILTER_NEAREST,
 			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
@@ -1481,24 +1640,33 @@ void Tutorial::load_scene_object_textures()
 					rgba_data[j + 2] = ((uint8_t *)image_data)[i + 2]; // B
 					rgba_data[j + 3] = 255;							   // A
 				}
-			}
+				// make a place for the texture to live on the GPU:
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)h},			  // size of image
+					n == 3 ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+					Helpers::Unmapped));
 
-			// make a place for the texture to live on the GPU:
-			textures.emplace_back(rtg.helpers.create_image(
-				VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)h},	 // size of image
-				n == 3 ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB, // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
-				VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
-				Helpers::Unmapped));
-
-			// transfer data:
-			if (n == 3)
-			{
 				rtg.helpers.transfer_to_image(rgba_data.data(), w * h * 4, textures.back());
 			}
-			else
+
+			else if (n == 4)
 			{
+				// convert to E5B9G9R9
+				std::vector<uint32_t> e5b9g9r9_data = convertImageToE5B9G9R9(image_data, w, h);
+
+				// make a place for the texture to live on the GPU:
+				// TODO: convert to E5B9G9R9 format
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{.width = (uint32_t)w, .height = (uint32_t)h},	 // size of image
+					n == 3 ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB, // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+					Helpers::Unmapped));
+
 				rtg.helpers.transfer_to_image(image_data, w * h * n, textures.back());
 			}
 
@@ -2083,7 +2251,7 @@ void Tutorial::on_input(InputEvent const &evt)
 			// update mouse cor
 			// Define the edge threshold
 			int edge_threshold = 10;		   // Adjust this value based on your needs
-			float edge_rotation_speed = 0.01f; // Adjust this value to control how fast the camera rotates at the edge
+			float edge_rotation_speed = 0.05f; // Adjust this value to control how fast the camera rotates at the edge
 
 			// Check if the mouse is near the edge of the screen and apply additional rotation
 			if (evt.motion.x <= edge_threshold)
@@ -2126,7 +2294,7 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 	// move camera:
 	{
 		// combine inputs into a move:
-		constexpr float PlayerSpeed = 10.f;
+		constexpr float PlayerSpeed = 6.f;
 		glm::vec2 move = glm::vec2(0.0f);
 		if (playmode.left.pressed && !playmode.right.pressed)
 			move.x = -1.0f;
@@ -2268,15 +2436,6 @@ void Tutorial::set_scene_objects(std::vector<SceneVertex> &vertices)
 
 	for (auto &node : s72_scene.nodes)
 	{
-		if (node.mesh_ == nullptr)
-			continue;
-
-		MeshVertices mesh_vertices = s72_scene.mesh_vertices_map[node.mesh_];
-
-		SceneObject scene_object;
-
-		scene_object.scene_object_vertices.first = mesh_vertices.first;
-		scene_object.scene_object_vertices.count = mesh_vertices.count;
 
 		auto local_to_world = node.make_local_to_world();
 
@@ -2287,14 +2446,23 @@ void Tutorial::set_scene_objects(std::vector<SceneVertex> &vertices)
 			glm::vec4(local_to_world[2], extra_column[2]),
 			glm::vec4(local_to_world[3], extra_column[3]));
 
+		// save in global
+		s72_scene.transforms[&node] = combined_matrix;
+
+		if (node.mesh_ == nullptr)
+			continue;
+		MeshVertices mesh_vertices = s72_scene.mesh_vertices_map[node.mesh_];
+
+		SceneObject scene_object;
+
+		scene_object.scene_object_vertices.first = mesh_vertices.first;
+		scene_object.scene_object_vertices.count = mesh_vertices.count;
+
 		scene_object.transform = combined_matrix;
 		scene_object.object_node_ = &node;
 		scene_object.object_mesh_ = node.mesh_;
 
 		scene_objects.push_back(scene_object);
-
-		// save in global
-		s72_scene.transforms[&node] = combined_matrix;
 	}
 }
 
@@ -2390,4 +2558,36 @@ void Tutorial::load_vertex_from_b72(std::vector<SceneVertex> &vertices)
 		dfs_process_node(root_node);
 	}
 	// std::cout << "load_vertex_from_b72 done\n";
+}
+
+std::vector<uint32_t> Tutorial::convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height)
+{
+	std::vector<uint32_t> e5b9g9r9_data(width * height);
+
+	for (int y = 0; y < height; ++y)
+	{
+		for (int x = 0; x < width; ++x)
+		{
+			int idx = (y * width + x) * 4; // 4 channels for r8g8b8e8
+
+			// Extract R, G, B, and E channels from image_data
+			float r = image_data[idx] / 255.0f;
+			float g = image_data[idx + 1] / 255.0f;
+			float b = image_data[idx + 2] / 255.0f;
+			int e8 = image_data[idx + 3];
+
+			// Convert e8 to a scale factor for RGB
+			float scale = std::pow(2.0f, e8 - 128.f); // 128 bias for 8-bit exponent
+
+			// Scale RGB by the exponent
+			r *= scale;
+			g *= scale;
+			b *= scale;
+
+			// Convert to e5b9g9r9 and store in output
+			e5b9g9r9_data[y * width + x] = convertToE5B9G9R9(r, g, b);
+		}
+	}
+
+	return e5b9g9r9_data;
 }

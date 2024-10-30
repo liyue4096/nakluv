@@ -20,6 +20,7 @@
 struct Mesh;
 struct Camera;
 struct Driver;
+struct LightObject;
 
 enum Animation_Mode
 {
@@ -69,6 +70,13 @@ enum MaterialType
     ENVIRONMENT,
 };
 
+enum LightType
+{
+    SUN,
+    SPHERE,
+    SPOT,
+};
+
 struct Texture
 {
     std::string src;
@@ -109,6 +117,7 @@ struct Node
 
     Mesh *mesh_ = nullptr;
     Camera *camera_ = nullptr;
+    LightObject *light_ = nullptr;
     // Driver *driver_ = nullptr;
 
     // void make_animation(float time);
@@ -211,7 +220,7 @@ struct LambertianMaterial
 {
     AlbedoParam albedo;
 
-    LambertianMaterial() : albedo(glm::vec3(0.8f)) {}
+    LambertianMaterial() : albedo(glm::vec3(0.8f, 0.8f, 0.8f)) {}
 
     LambertianMaterial(glm::vec3 albedo) : albedo(albedo) {}
 };
@@ -231,13 +240,46 @@ struct Environment
     Texture radiance;
 };
 
-// struct LightObject
-// {
-//     std::string name;
-//     glm::vec3 tint;
-//     std::variant<SunLight, SphereLight, SpotLight> light;
-//     uint32_t shadow;
-// };
+struct SunLight
+{
+    float angle;
+    float strength;
+};
+
+struct SphereLight
+{
+    float radius;
+    float power;
+    float limit;
+    float padding;
+};
+
+struct SpotLight
+{
+    float radius;
+    float power;
+    float fov;
+    float blend;
+    float limit;
+    float padding;
+};
+
+struct LightObject
+{
+    std::string name;
+    glm::vec3 tint = {1.f, 1.f, 1.f};
+    float padding = 0;
+    LightType type;
+    uint32_t shadow = 0;
+
+    union
+    {
+        float data_lookup[6];
+        SunLight sun;
+        SphereLight sphere;
+        SpotLight spot;
+    } data;
+};
 
 struct S72_scene
 {
@@ -251,11 +293,13 @@ struct S72_scene
     std::unordered_map<Mesh *, MaterialObject *> mesh_material_map;
     std::unordered_map<MaterialObject *, std::vector<int>> material_textureindex_map; // index 0: albedo, 1: normal map, 2: displacement map
     std::unordered_map<MaterialObject *, int> material_descriptor_index_map;
+    std::unordered_map<LightObject *, Node *> light_node_map;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<MaterialObject> materials;
     std::vector<Camera> cameras;
     std::vector<Driver> drivers;
+    std::vector<LightObject> lights;
     std::vector<std::string> textures_src;
     std::unordered_map<std::string, uint32_t> textures_src_index_map;
     Camera_Mode camera_mode = SCENE;
@@ -266,12 +310,18 @@ struct S72_scene
 void get_scene(const std::vector<sejp::value> &array);
 Mesh *find_mesh_by_name(const std::string &mesh_name);
 Camera *find_camera_by_name(const std::string &camera_name);
+LightObject *find_light_by_name(const std::string &light_name);
+
 Node *find_node_by_name_or_index(const std::variant<std::string, double> &root);
 Node *find_node_by_name(std::string &str);
 void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> &);
 void build_node_trees();
 void bind_driver();
 void make_user_camera();
+
+uint32_t convertToE5B9G9R9(float r, float g, float b);
+
+glm::quat extract_rotation_quaternion(glm::mat4 &localToWorld);
 
 void setup_material_textureindex_map();
 

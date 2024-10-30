@@ -590,6 +590,81 @@ void get_scene(const std::vector<sejp::value> &array)
                     }
                 }
             }
+            // parse msg to Environment
+            else if (type_opt->second.as_string().value() == "LIGHT")
+            {
+                LightObject light;
+                //  Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    light.name = name_opt->second.as_string().value();
+                }
+                //  Get "shadow" field
+                if (auto shadow_opt = obj.find("shadow"); shadow_opt != obj.end() && shadow_opt->second.as_number())
+                {
+                    light.shadow = static_cast<uint32_t>(shadow_opt->second.as_number().value_or(0.f));
+                }
+                // Check for "sun" type light
+                if (auto sun_opt = obj.find("sun"); sun_opt != obj.end() && sun_opt->second.as_object())
+                {
+                    light.type = SUN;
+                    const auto &sun = sun_opt->second.as_object().value();
+                    if (auto angle_opt = sun.find("angle"); angle_opt != sun.end() && angle_opt->second.as_number())
+                    {
+                        light.data.sun.angle = static_cast<float>(angle_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto strength_opt = sun.find("strength"); strength_opt != sun.end() && strength_opt->second.as_number())
+                    {
+                        light.data.sun.strength = static_cast<float>(strength_opt->second.as_number().value_or(0.0f));
+                    }
+                }
+                // Check for "sphere" type light
+                else if (auto sphere_opt = obj.find("sphere"); sphere_opt != obj.end() && sphere_opt->second.as_object())
+                {
+                    light.type = SPHERE;
+                    const auto &sphere = sphere_opt->second.as_object().value();
+                    if (auto radius_opt = sphere.find("radius"); radius_opt != sphere.end() && radius_opt->second.as_number())
+                    {
+                        light.data.sphere.radius = static_cast<float>(radius_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto power_opt = sphere.find("power"); power_opt != sphere.end() && power_opt->second.as_number())
+                    {
+                        light.data.sphere.power = static_cast<float>(power_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto limit_opt = sphere.find("limit"); limit_opt != sphere.end() && limit_opt->second.as_number())
+                    {
+                        light.data.sphere.limit = static_cast<float>(limit_opt->second.as_number().value_or(0.0f));
+                    }
+                }
+                // Check for "spot" type light
+                else if (auto spot_opt = obj.find("spot"); spot_opt != obj.end() && spot_opt->second.as_object())
+                {
+                    light.type = SPOT;
+                    const auto &spot = spot_opt->second.as_object().value();
+                    if (auto radius_opt = spot.find("radius"); radius_opt != spot.end() && radius_opt->second.as_number())
+                    {
+                        light.data.spot.radius = static_cast<float>(radius_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto power_opt = spot.find("power"); power_opt != spot.end() && power_opt->second.as_number())
+                    {
+                        light.data.spot.power = static_cast<float>(power_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto fov_opt = spot.find("fov"); fov_opt != spot.end() && fov_opt->second.as_number())
+                    {
+                        light.data.spot.fov = static_cast<float>(fov_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto blend_opt = spot.find("blend"); blend_opt != spot.end() && blend_opt->second.as_number())
+                    {
+                        light.data.spot.blend = static_cast<float>(blend_opt->second.as_number().value_or(0.0f));
+                    }
+                    if (auto limit_opt = spot.find("limit"); limit_opt != spot.end() && limit_opt->second.as_number())
+                    {
+                        light.data.spot.limit = static_cast<float>(limit_opt->second.as_number().value_or(0.0f));
+                    }
+                }
+
+                s72_scene.lights.push_back(light);
+            }
         }
 
         index++;
@@ -618,6 +693,18 @@ Camera *find_camera_by_name(const std::string &camera_name)
         }
     }
     return nullptr; // Return nullptr if camera is not found
+}
+
+LightObject *find_light_by_name(const std::string &light_name)
+{
+    for (auto &light : s72_scene.lights)
+    {
+        if (light.name == light_name)
+        {
+            return &light; // Return a pointer to the matching light
+        }
+    }
+    return nullptr; // Return nullptr if light is not found
 }
 
 Node *find_node_by_name(std::string &str)
@@ -695,6 +782,17 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
         // std::cout << "[End]" << std::endl; // Mark the end of the path
 
         s72_scene.cameras_path[current_node->camera_->name] = current_path;
+    }
+
+    // Bind the light if the node has a valid camera_name
+    if (!current_node->light_name.empty())
+    {
+        current_node->light_ = find_light_by_name(current_node->light_name);
+        // std::cout << "Node: " << current_node->name << " has a camera :" << current_node->camera_->name << "\n";
+        if (current_node->light_)
+        {
+            s72_scene.light_node_map[current_node->light_] = current_node;
+        }
     }
 
     // Process each child of the current node
@@ -782,6 +880,7 @@ void scene_workflow(sejp::value &val)
     s72_scene.cameras.clear();
     s72_scene.drivers.clear();
     s72_scene.textures_src.clear();
+    s72_scene.lights.clear();
 
     // step1: load .s72, parse all information
     if (auto array_opt = val.as_array(); array_opt)
@@ -928,6 +1027,22 @@ void setup_material_textureindex_map()
     std::vector<int> t_index = s72_scene.material_textureindex_map[&s72_scene.materials.back()];
     printf("material name: %s, texture( %d, %d, %d)\n", s72_scene.materials.back().name.c_str(), t_index[0], t_index[1], t_index[2]);
     printf("texture size: %zd,  s72_scene.material_textureindex_map size : %zd\n", s72_scene.textures_src.size(), s72_scene.material_textureindex_map.size());
+}
+
+uint32_t convertToE5B9G9R9(float r, float g, float b)
+{
+    float maxRGB = std::max(r, std::max(g, b));
+    int exponent = std::max(static_cast<int>(std::ceil(std::log2(maxRGB))), 0);
+    float scale = std::pow(2.0f, exponent - 15.f); // Adjust to fit 5-bit exponent range
+
+    // Scale RGB to fit 9-bit channels
+    uint32_t R9 = static_cast<uint32_t>(std::min(511.0f, std::round(r / scale))) & 0x1FF;
+    uint32_t G9 = static_cast<uint32_t>(std::min(511.0f, std::round(g / scale))) & 0x1FF;
+    uint32_t B9 = static_cast<uint32_t>(std::min(511.0f, std::round(b / scale))) & 0x1FF;
+
+    // Pack R9, G9, B9, and exponent into a 32-bit value
+    uint32_t packed = (R9) | (G9 << 9) | (B9 << 18) | ((exponent & 0x1F) << 27);
+    return packed;
 }
 
 glm::mat4 generate_transform(const Node *node)
@@ -1141,6 +1256,11 @@ glm::mat4x3 Node::make_world_to_local() const
     }
 }
 
+glm::quat extract_rotation_quaternion(glm::mat4 &localToWorld)
+{
+    return glm::quat_cast(glm::mat3(localToWorld));
+}
+
 glm::mat4 Camera::make_projection() const
 {
     return glm::perspective(perspective.vfov, perspective.aspect, perspective.near, perspective.far);
@@ -1205,6 +1325,35 @@ void print_s72()
     for (const auto &[mesh_, material_] : s72_scene.mesh_material_map)
     {
         std::cout << mesh_->name << " : " << material_->name << "  type: " << material_->type << std::endl;
+    }
+
+    for (auto &light : s72_scene.lights)
+    {
+        printf("%s: %d, %d, tint: %f, %f, %f.\n", light.name.c_str(), light.shadow, light.type,
+               light.tint.x, light.tint.y, light.tint.z);
+
+        Node *node_ = s72_scene.light_node_map[&light];
+        auto transform = s72_scene.transforms[node_];
+
+        printf("%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n",
+               transform[0][0], transform[0][1], transform[0][2], transform[0][3],
+               transform[1][0], transform[1][1], transform[1][2], transform[1][3],
+               transform[2][0], transform[2][1], transform[2][2], transform[2][3],
+               transform[3][0], transform[3][1], transform[3][2], transform[3][3]);
+        printf("position: %f %f %f %f\n", transform[3][0], transform[3][1], transform[3][2], transform[3][3]);
+        if (light.type == SUN)
+        {
+            printf("\"sun:\" angle: %f, strength: %f\n", light.data.sun.angle, light.data.sun.strength);
+        }
+        else if (light.type == SPHERE)
+        {
+            printf("\"sphere:\" radius: %f, power: %f, limit: %f\n", light.data.sphere.radius, light.data.sphere.power, light.data.sphere.limit);
+        }
+        else if (light.type == SPOT)
+        {
+            printf("\"spot:\" radius: %f, power: %f, fov: %f, blend: %f, limit: %f\n",
+                   light.data.spot.radius, light.data.spot.power, light.data.spot.fov, light.data.spot.blend, light.data.spot.limit);
+        }
     }
 
     // std::cin.get();

@@ -72,7 +72,7 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
                 .binding = 3,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 .descriptorCount = 1,
-                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
         };
 
         VkDescriptorSetLayoutCreateInfo create_info{
@@ -84,12 +84,31 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
         VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE));
     }
 
+    { // the set3_Light layout holds two arrays of light structures in a storage buffer used in the fragment shader:
+        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_Light));
+    }
+
     {
         // create pipeline layout:
-        std::array<VkDescriptorSetLayout, 3> layouts{
+        std::array<VkDescriptorSetLayout, 4> layouts{
             set0_World,
             set1_Transforms,
             set2_TEXTURE,
+            set3_Light,
         };
 
         VkPushConstantRange range{
@@ -223,6 +242,12 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
 
 void Tutorial::ScenesPipeline::destroy(RTG &rtg)
 {
+    if (set3_Light != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(rtg.device, set3_Light, nullptr);
+        set3_Light = VK_NULL_HANDLE;
+    }
+
     if (set2_TEXTURE != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(rtg.device, set2_TEXTURE, nullptr);
