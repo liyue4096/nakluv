@@ -144,7 +144,8 @@ struct RTG
 	{
 		VkFence workspace_available = VK_NULL_HANDLE; // workspace is ready for a new render
 		VkSemaphore image_available = VK_NULL_HANDLE; // the image is ready to write to
-		VkSemaphore image_done = VK_NULL_HANDLE;	  // the image is done being written to
+		VkSemaphore image_done = VK_NULL_HANDLE;
+		VkSemaphore shadow_image_done = VK_NULL_HANDLE;
 	};
 	std::vector<PerWorkspace> workspaces;
 	//^^ this size could probably be hardcoded (it will almost always be 2 unless you want bottlenecks!), but I'm leaving it variable at the moment.
@@ -199,6 +200,7 @@ struct RTG
 		uint32_t image_index;						  // which swapchain image to render into
 		VkSemaphore image_available = VK_NULL_HANDLE; // nothing should use the swapchain image until this is signal'd
 		VkSemaphore image_done = VK_NULL_HANDLE;	  // this should be signal'd when the image is done being written to
+		VkSemaphore shadow_image_done = VK_NULL_HANDLE;
 		VkFence workspace_available = VK_NULL_HANDLE; // this should be signal'd when *all* work is done for the frame
 	};
 };

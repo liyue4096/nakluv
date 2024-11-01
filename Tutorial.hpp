@@ -222,6 +222,39 @@ struct Tutorial : RTG::Application
 		void destroy(RTG &);
 	} scenes_pipeline;
 
+	struct ShadowPipeline
+	{
+		// descriptor set layouts:
+		VkDescriptorSetLayout set0_ViewProjection = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
+
+		struct ViewProjection
+		{
+			mat4 CLIP_FORM_LIGHT;
+			mat4 PROJECTION;
+		};
+
+		struct Transform
+		{
+			mat4 CLIP_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL;
+		};
+
+		struct Push
+		{
+			glm::mat4 CLIP_FORM_LIGHT;
+		};
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = SceneVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} shadow_pipeline;
+
 	struct HeadlessPipeline
 	{
 		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -246,6 +279,7 @@ struct Tutorial : RTG::Application
 	struct Workspace
 	{
 		VkCommandBuffer command_buffer = VK_NULL_HANDLE; // from the command pool above; reset at the start of every render.
+		VkCommandBuffer shadow_map_cmd_buf = VK_NULL_HANDLE;
 
 		// location for lines data: (streamed to GPU per-frame)
 		Helpers::AllocatedBuffer lines_vertices_src; // host coherent; mapped
@@ -271,7 +305,7 @@ struct Tutorial : RTG::Application
 		// Helpers::AllocatedBuffer Scene_camera;	   // device-local
 		// VkDescriptorSet Scene_camera_descriptors;  // references Camera
 
-		// location for ObjectsPipeline::World data: (streamed to GPU per-frame)
+		// location for ScenesPipeline::World data: (streamed to GPU per-frame)
 		Helpers::AllocatedBuffer Scene_world_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Scene_world;	  // device-local
 		VkDescriptorSet Scene_world_descriptors;  // references World
@@ -285,6 +319,11 @@ struct Tutorial : RTG::Application
 		Helpers::AllocatedBuffer Scene_light_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Scene_light;	  // device-local
 		VkDescriptorSet Scene_light_descriptors;  // references lightBuffer
+
+		// location for ShadowPipeline::World data: (streamed to GPU per-frame)
+		Helpers::AllocatedBuffer Shadow_view_projection_src; // host coherent; mapped
+		Helpers::AllocatedBuffer Shadow_view_projection;	 // device-local
+		VkDescriptorSet Shadow_view_projection_descriptors;	 // references Shadow_view_projection
 
 		// location for ScenesPipeline::Transforms data: (streamed to GPU per-frame)
 		Helpers::AllocatedBuffer Headless_src; // host coherent; mapped
@@ -335,6 +374,14 @@ struct Tutorial : RTG::Application
 	VkImageView flat_disp_view = VK_NULL_HANDLE;
 	VkSampler disp_sampler = VK_NULL_HANDLE;
 
+	const uint32_t SHADOW_MAP_WIDTH = 2048;
+	const uint32_t SHADOW_MAP_HEIGHT = 2048;
+	VkRenderPass shadow_map_render_pass = VK_NULL_HANDLE;
+	Helpers::AllocatedImage shadow_map;
+	VkImageView shadow_view = VK_NULL_HANDLE;
+	VkSampler shadow_sampler = VK_NULL_HANDLE;
+	VkFramebuffer shadow_map_framebuffer = VK_NULL_HANDLE;
+
 	struct MaterialTexture
 	{
 		MaterialType type;
@@ -370,6 +417,12 @@ struct Tutorial : RTG::Application
 	void setup_views_sample();
 	void setup_normal_views_sample();
 	void setup_disp_views_sample();
+
+	void setup_shadow_image();
+	void setup_shadow_views_sample();
+	void create_shadow_renderpass();
+	void create_shadow_framebuffer();
+
 	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
 
 	void setup_texture_descriptor_pool();
@@ -421,6 +474,10 @@ struct Tutorial : RTG::Application
 	// Rendering function, uses all the resources above to queue work to draw a frame:
 
 	virtual void render(RTG &, RTG::RenderParams const &) override;
+	void render_upload_scene_instances(RTG::RenderParams const &render_params);
+	void render_upload_lights(RTG::RenderParams const &render_params);
+	void render_pass_command(RTG::RenderParams const &, VkFramebuffer &framebuffer);
+	void shadow_render(RTG::RenderParams const &render_params);
 
 	//--------------------------------------------------------------------
 	struct PlayMode

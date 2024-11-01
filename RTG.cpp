@@ -524,6 +524,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 
 			VK(vkCreateSemaphore(device, &create_info, nullptr, &workspace.image_available));
 			VK(vkCreateSemaphore(device, &create_info, nullptr, &workspace.image_done));
+			VK(vkCreateSemaphore(device, &create_info, nullptr, &workspace.shadow_image_done));
 		}
 	}
 
@@ -561,6 +562,11 @@ RTG::~RTG()
 		{
 			vkDestroySemaphore(device, workspace.image_done, nullptr);
 			workspace.image_done = VK_NULL_HANDLE;
+		}
+		if (workspace.shadow_image_done != VK_NULL_HANDLE)
+		{
+			vkDestroySemaphore(device, workspace.shadow_image_done, nullptr);
+			workspace.shadow_image_done = VK_NULL_HANDLE;
 		}
 	}
 	workspaces.clear();
@@ -951,6 +957,7 @@ void RTG::run(Application &application)
 										  .image_index = image_index,
 										  .image_available = workspaces[workspace_index].image_available,
 										  .image_done = workspaces[workspace_index].image_done,
+										  .shadow_image_done = workspaces[workspace_index].shadow_image_done,
 										  .workspace_available = workspaces[workspace_index].workspace_available,
 									  });
 

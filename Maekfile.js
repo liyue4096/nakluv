@@ -75,6 +75,12 @@ const real_objects_shaders = [
 ];
 main_objs.push( maek.CPP('pipelines/ScenesPipeline.cpp', undefined, { depends:[...real_objects_shaders] } ) );
 
+// to build shadow shaders and pipeline
+const shadow_shaders = [
+	maek.GLSLC('./shaders/shadow.vert'),
+];
+main_objs.push( maek.CPP('pipelines/ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
+
 //to build headless shaders and pipeline:
 const headless_shaders = [
 	maek.GLSLC('./shaders/headless.comp'),
