@@ -22,6 +22,7 @@
 
 #include "include/sejp/sejp.hpp"
 #include "lib/bbox.h"
+#include "lib/Frustum.h"
 
 #include "include/stb/stb_image.h"
 
@@ -505,6 +506,8 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		VK(vkBeginCommandBuffer(workspace.command_buffer, &begin_info));
 	}
 
+	transitionImageLayout(workspace.command_buffer, shadow_map.handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
 	{ // upload scene world info:
 		assert(workspace.Scene_world_src.size == sizeof(world));
 
@@ -644,8 +647,7 @@ void Tutorial::render_upload_lights(RTG::RenderParams const &render_params)
 	Workspace &workspace = workspaces[render_params.workspace_index];
 	if (!s72_scene.lights.empty())
 	{
-		// upload scene lights:
-		size_t needed_bytes = s72_scene.lights.size() * sizeof(ScenesPipeline::Light);
+		size_t needed_bytes = total_light_obj_cnt * sizeof(ScenesPipeline::Light);
 		if (workspace.Scene_light_src.handle == VK_NULL_HANDLE || workspace.Scene_light_src.size < needed_bytes)
 		{
 			size_t new_bytes = ((needed_bytes + 192) / 192) * 192;
@@ -678,7 +680,12 @@ void Tutorial::render_upload_lights(RTG::RenderParams const &render_params)
 				.range = workspace.Scene_light.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 1> writes{
+			VkDescriptorImageInfo shadow_map_info{};
+			shadow_map_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			shadow_map_info.imageView = shadow_view;  // View of the shadow map
+			shadow_map_info.sampler = shadow_sampler; // Sampler created for shadow map
+
+			std::array<VkWriteDescriptorSet, 2> writes{
 				VkWriteDescriptorSet{
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Scene_light_descriptors,
@@ -687,6 +694,15 @@ void Tutorial::render_upload_lights(RTG::RenderParams const &render_params)
 					.descriptorCount = 1,
 					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 					.pBufferInfo = &Lights_info,
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Scene_light_descriptors,
+					.dstBinding = 1,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &shadow_map_info,
 				},
 			};
 
@@ -710,31 +726,42 @@ void Tutorial::render_upload_lights(RTG::RenderParams const &render_params)
 		{
 			if (s72_scene.light_node_map.find(&light) != s72_scene.light_node_map.end())
 			{
-				Node *node_ = s72_scene.light_node_map[&light];
-				auto transform = s72_scene.transforms[node_];
-				out->light_obj.tint = light.tint;
-				out->light_obj.type = light.type;
-				// printf("Type: %d ", out->light_obj.type);
-
-				if (out->light_obj.type == SUN)
+				auto nodes = s72_scene.light_node_map[&light];
+				for (auto node_ : nodes)
 				{
-					out->light_obj.data.sun = light.data.sun;
-				}
-				else if (out->light_obj.type == SPHERE)
-				{
-					out->light_obj.data.sphere = light.data.sphere;
-				}
-				else if (out->light_obj.type == SPOT)
-				{
-					out->light_obj.data.spot = light.data.spot;
-				}
+					// Node *node_ = s72_scene.light_node_map[&light];
+					glm::mat4 mat_perspective(1.0f);
+					auto transform = s72_scene.transforms[node_];
 
-				out->light_obj.shadow = light.shadow;
+					out->light_obj.tint = light.tint;
+					out->light_obj.type = light.type;
+					// printf("Type: %d ", out->light_obj.type);
 
-				out->position = transform[3];
-				out->quaternion = extract_rotation_quaternion(transform);
+					if (out->light_obj.type == SUN)
+					{
+						out->light_obj.data.sun = light.data.sun;
+					}
+					else if (out->light_obj.type == SPHERE)
+					{
+						out->light_obj.data.sphere = light.data.sphere;
+					}
+					else if (out->light_obj.type == SPOT)
+					{
+						out->light_obj.data.spot = light.data.spot;
+						float far = light.data.spot.limit > 0.1f ? light.data.spot.limit : 1e5f;
+						mat_perspective = mat4_perspective(light.data.spot.fov, 1.f, 0.1f, far);
+					}
+
+					out->light_obj.shadow = light.shadow;
+
+					out->position = transform[3];
+					out->quaternion = extract_rotation_quaternion(transform);
+
+					out->transform = mat_perspective * glm::mat4(node_->make_world_to_local());
+
+					++out;
+				}
 			}
-			++out;
 		}
 
 		// device-side copy
@@ -764,6 +791,64 @@ void Tutorial::render_upload_lights(RTG::RenderParams const &render_params)
 	}
 }
 
+void Tutorial::set_shadow_viewport(RTG::RenderParams const &render_params, int row, int col)
+{
+	Workspace &workspace = workspaces[render_params.workspace_index];
+	// configure viewport transform
+	VkViewport viewport{
+		.x = float(col * SHADOW_MAP_WIDTH),
+		.y = float(row * SHADOW_MAP_HEIGHT),
+		.width = float(SHADOW_MAP_WIDTH),
+		.height = float(SHADOW_MAP_HEIGHT),
+		.minDepth = 0.0f,
+		.maxDepth = 1.0f,
+	};
+	vkCmdSetViewport(workspace.shadow_map_cmd_buf, 0, 1, &viewport);
+
+	// set scissor rectangle:
+	VkRect2D scissor{
+		.offset = {int32_t(viewport.x), int32_t(viewport.y)},
+		.extent = {uint32_t(viewport.width), uint32_t(viewport.height)},
+	};
+	vkCmdSetScissor(workspace.shadow_map_cmd_buf, 0, 1, &scissor);
+}
+
+void Tutorial::transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT; // For depth images
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+	if (oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+	{
+		barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	}
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		sourceStage, destinationStage,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier);
+}
+
 void Tutorial::shadow_render(RTG::RenderParams const &render_params)
 {
 	Workspace &workspace = workspaces[render_params.workspace_index];
@@ -787,38 +872,14 @@ void Tutorial::shadow_render(RTG::RenderParams const &render_params)
 	rp_begin.framebuffer = shadow_map_framebuffer;
 	rp_begin.renderArea.offset.x = 0;
 	rp_begin.renderArea.offset.y = 0;
-	rp_begin.renderArea.extent.width = SHADOW_MAP_WIDTH;
-	rp_begin.renderArea.extent.height = SHADOW_MAP_HEIGHT;
+	rp_begin.renderArea.extent.width = SHADOW_MAP_WIDTH * shadow_map_grid_size;
+	rp_begin.renderArea.extent.height = SHADOW_MAP_HEIGHT * shadow_map_grid_size;
 	rp_begin.clearValueCount = 1;
 	rp_begin.pClearValues = clear_values;
 
 	vkCmdBeginRenderPass(workspace.shadow_map_cmd_buf,
 						 &rp_begin,
 						 VK_SUBPASS_CONTENTS_INLINE);
-
-	{
-		// run pipelines here
-		{
-			// set scissor rectangle:
-			VkRect2D scissor{
-				.offset = {.x = 0, .y = 0},
-				.extent = rtg.swapchain_extent,
-			};
-			vkCmdSetScissor(workspace.shadow_map_cmd_buf, 0, 1, &scissor);
-		}
-		{
-			// configure viewport transform
-			VkViewport viewport{
-				.x = 0.0f,
-				.y = 0.0f,
-				.width = float(rtg.swapchain_extent.width),
-				.height = float(rtg.swapchain_extent.height),
-				.minDepth = 0.0f,
-				.maxDepth = 1.0f,
-			};
-			vkCmdSetViewport(workspace.shadow_map_cmd_buf, 0, 1, &viewport);
-		}
-	}
 
 	if (!scene_instances.empty())
 	{
@@ -843,36 +904,49 @@ void Tutorial::shadow_render(RTG::RenderParams const &render_params)
 									0, nullptr);
 		}
 
+		int i = 0;
 		for (LightObject &light : s72_scene.lights)
 		{
+			int row = i / shadow_map_grid_size;
+			int col = i % shadow_map_grid_size;
+
 			if (light.type == SPOT)
 			{
 				glm::mat4 transform = glm::mat4(1.0f);
 				if (s72_scene.light_node_map.find(&light) != s72_scene.light_node_map.end())
 				{
-					Node *node_ = s72_scene.light_node_map[&light];
-					transform = glm::mat4(node_->make_world_to_local());
-				}
+					auto nodes = s72_scene.light_node_map[&light];
+					// Node *node_ = s72_scene.light_node_map[&light];
+					for (auto node_ : nodes)
+					{
+						row = i / shadow_map_grid_size;
+						col = i % shadow_map_grid_size;
+						set_shadow_viewport(render_params, row, col);
 
-				float aspect = 1.0f;
-				float vfov = tan(light.data.spot.fov * 0.5f);
-				float near = 0.1f;
-				float far = light.data.spot.radius > 0.1f ? light.data.spot.radius : 1e10f;
+						transform = glm::mat4(node_->make_world_to_local());
 
-				auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
+						float aspect = 1.0f;
+						float vfov = light.data.spot.fov;
+						float near = 0.1f;
+						float far = light.data.spot.radius > 0.1f ? light.data.spot.radius : 1e8f;
 
-				ShadowPipeline::Push push{
-					.CLIP_FORM_LIGHT = mat_perspective * transform,
-				};
+						auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
 
-				// draw all instances:
-				for (ScenesObjectInstance const &inst : scene_instances)
-				{
-					uint32_t index = uint32_t(&inst - &scene_instances[0]);
+						ShadowPipeline::Push push{
+							.CLIP_FORM_LIGHT = mat_perspective * transform,
+						};
 
-					vkCmdPushConstants(workspace.shadow_map_cmd_buf, shadow_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+						vkCmdPushConstants(workspace.shadow_map_cmd_buf, shadow_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
-					vkCmdDraw(workspace.shadow_map_cmd_buf, inst.vertices.count, 1, inst.vertices.first, index);
+						// draw all instances:
+						for (ScenesObjectInstance const &inst : scene_instances)
+						{
+							uint32_t index = uint32_t(&inst - &scene_instances[0]);
+
+							vkCmdDraw(workspace.shadow_map_cmd_buf, inst.vertices.count, 1, inst.vertices.first, index);
+						}
+						i++;
+					}
 				}
 			}
 		}
@@ -1121,6 +1195,7 @@ void Tutorial::update(float dt)
 			glm::mat4 WORLD_FROM_LOCAL(1.0f);
 			glm::mat4 CLIP_FROM_WORLD_SCENE(1.0f);
 			glm::mat4 WORLD_FROM_LOCAL_debug(1.0f);
+			glm::mat4 CULL(1.0f);
 
 			// update transforms
 			// in PLAY Animation_Mode, multiple animation matrix
@@ -1171,6 +1246,8 @@ void Tutorial::update(float dt)
 
 					auto mat_perspective = mat4_perspective(vfov, aspect, near, far);
 
+					CULL = mat_perspective;
+
 					CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
 
 					glm::vec3 eye_world_position = glm::vec3(camera_node_->make_local_to_world() * glm::vec4(0.f, 0.f, 0.f, 1.0f));
@@ -1207,8 +1284,9 @@ void Tutorial::update(float dt)
 				{
 					BBox bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(s72_scene.transforms[node_]);
 					auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
-
-					if (bbox_trans.is_bbox_outside_frustum(planes) == true)
+					// auto vertices = extractFrustumVertices(CLIP_FROM_WORLD_SCENE);
+					//  auto frustum = Frustum::createFrustumFromMatrix(CLIP_FROM_WORLD_SCENE);
+					if (bbox_trans.is_bbox_outside_frustum_1(planes)) // || bbox_trans.is_bbox_intersecting_frustum_1(planes))
 					{
 						continue;
 					}
@@ -2061,9 +2139,19 @@ void Tutorial::setup_disp_views_sample()
 
 void Tutorial::setup_shadow_image()
 {
+	total_light_obj_cnt = 0;
+	for (const auto &pair : s72_scene.light_node_map)
+	{
+		total_light_obj_cnt += pair.second.size(); // pair.second is the vector of Node*
+	}
+
+	shadow_map_grid_size = (uint32_t)(sqrt(total_light_obj_cnt) + 4) / 4 * 4;
+
+	printf("shadow_map_grid_size: %d\n", shadow_map_grid_size);
+
 	shadow_map = rtg.helpers.create_image(
-		VkExtent2D{.width = SHADOW_MAP_WIDTH, .height = SHADOW_MAP_HEIGHT}, // size of image
-		VK_FORMAT_D32_SFLOAT,												// how to interpret image data
+		VkExtent2D{.width = SHADOW_MAP_WIDTH * shadow_map_grid_size, .height = SHADOW_MAP_HEIGHT * shadow_map_grid_size}, // size of image
+		VK_FORMAT_D32_SFLOAT,																							  // how to interpret image data
 		VK_IMAGE_TILING_OPTIMAL,
 		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
 			VK_IMAGE_USAGE_SAMPLED_BIT,		 // will sample and DEPTH_STENCIL
@@ -2150,8 +2238,8 @@ void Tutorial::create_shadow_framebuffer()
 	fb_info.renderPass = shadow_map_render_pass;
 	fb_info.attachmentCount = 1;
 	fb_info.pAttachments = &shadow_view;
-	fb_info.width = SHADOW_MAP_WIDTH;
-	fb_info.height = SHADOW_MAP_HEIGHT;
+	fb_info.width = SHADOW_MAP_WIDTH * shadow_map_grid_size;
+	fb_info.height = SHADOW_MAP_HEIGHT * shadow_map_grid_size;
 	fb_info.layers = 1;
 	fb_info.flags = 0;
 
@@ -2649,6 +2737,10 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 		glm::vec3 frame_forward = -frame[2];
 
 		node_->position += move.x * frame_right + move.y * frame_forward;
+
+		s72_scene.transforms[node_] = node_->make_local_to_world();
+
+		node_->child_forward_kinematics_transforms(node_);
 	}
 
 	// reset button press counters:
@@ -2770,7 +2862,6 @@ void Tutorial::set_scene_objects(std::vector<SceneVertex> &vertices)
 
 	for (auto &node : s72_scene.nodes)
 	{
-
 		auto local_to_world = node.make_local_to_world();
 
 		glm::vec4 extra_column = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);

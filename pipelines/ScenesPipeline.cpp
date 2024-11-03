@@ -85,10 +85,15 @@ void Tutorial::ScenesPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32
     }
 
     { // the set3_Light layout holds two arrays of light structures in a storage buffer used in the fragment shader:
-        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
+            VkDescriptorSetLayoutBinding{
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
         };

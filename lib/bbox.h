@@ -13,12 +13,6 @@
 // #include "vec2.h"
 // #include "vec3.h"
 
-struct Plane
-{
-    glm::vec3 normal;
-    float distance;
-};
-
 /// Take minimum of each component
 inline glm::vec3 hmin(glm::vec3 l, glm::vec3 r)
 {
@@ -33,6 +27,11 @@ inline glm::vec3 hmax(glm::vec3 l, glm::vec3 r)
 
 struct BBox
 {
+    struct Plane
+    {
+        glm::vec3 normal;
+        float distance;
+    };
 
     /// Default min is max float value, default max is negative max float value
     BBox() : min(FLT_MAX), max(-FLT_MAX)
@@ -168,9 +167,9 @@ struct BBox
 
     glm::vec3 min, max;
 
-    bool is_bbox_outside_frustum(const std::array<Plane, 6> &planes)
+    bool is_bbox_outside_frustum(const std::array<BBox::Plane, 6> &planes)
     {
-        for (const Plane &plane : planes)
+        for (const BBox::Plane &plane : planes)
         {
             glm::vec3 nearest_point = min;
             if (plane.normal.x > 0)
@@ -187,6 +186,74 @@ struct BBox
         }
         return false;
     }
+
+    bool is_bbox_anyinside_frustum(const std::vector<glm::vec3> &vertices)
+    {
+        assert(vertices.size() > 3);
+
+        float radius = glm::distance(max, min);
+        glm::vec3 mid = (max + min) * 0.5f;
+        for (auto vertex : vertices)
+        {
+            if (glm::distance(vertex, mid) <= radius)
+                return true;
+            // if (glm::dot(vertex - min, max - min) < 0 || glm::dot(vertex - max, min - max) < 0)
+            // {
+            //     return true;
+            // }
+        }
+        for (auto vertex : vertices)
+        {
+            for (auto vertex_n : vertices)
+            {
+                if (glm::dot(vertex - min, vertex_n - min) <= 0 || glm::dot(vertex - max, vertex_n - max) <= 0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool is_bbox_intersecting_frustum(const std::array<BBox::Plane, 6> &planes)
+    {
+        float radius = glm::distance(max, min) * 0.5f;
+        glm::vec3 mid = (max + min) * 0.5f;
+
+        int intersect_cnt = 0;
+
+        for (const auto &plane : planes)
+        {
+            float distance = glm::dot(plane.normal, mid) - plane.distance;
+
+            if (distance < radius)
+                intersect_cnt++;
+        }
+
+        return (intersect_cnt == 6);
+    }
+
+    bool is_bbox_outside_frustum_1(const std::array<BBox::Plane, 6> &planes)
+    {
+        glm::vec3 mid = (max + min) * 0.5f; // Center of the bounding box
+        float radius = glm::distance(max, min) * 0.5f;
+
+        for (const auto &plane : planes)
+        {
+            // Calculate the signed distance from the bounding box center to the plane
+            float distance = glm::dot(plane.normal, mid) - plane.distance;
+
+            // If the bounding box is completely outside this plane, return false
+            if (distance > radius)
+            {
+                return true; // No intersection with the frustum
+            }
+        }
+
+        // If no plane fully excludes the bounding box, it intersects the frustum
+        return false;
+    }
 };
 
 // inline std::ostream &operator<<(std::ostream &out, BBox b)
@@ -195,9 +262,9 @@ struct BBox
 //     return out;
 // }
 
-inline std::array<Plane, 6> extract_planes(const glm::mat4 &matrix)
+inline std::array<BBox::Plane, 6> extract_planes(const glm::mat4 &matrix)
 {
-    std::array<Plane, 6> planes;
+    std::array<BBox::Plane, 6> planes;
 
     // Left
     planes[0].normal = glm::vec3(matrix[0][3] + matrix[0][0], matrix[1][3] + matrix[1][0], matrix[2][3] + matrix[2][0]);
@@ -216,10 +283,8 @@ inline std::array<Plane, 6> extract_planes(const glm::mat4 &matrix)
     planes[3].distance = matrix[3][3] - matrix[3][1];
 
     // Near
-    // planes[4].normal = glm::vec3(matrix[0][3] + matrix[0][2], matrix[1][3] + matrix[1][2], matrix[2][3] + matrix[2][2]);
-    // planes[4].distance = matrix[3][3] + matrix[3][2];
-    planes[4].normal = glm::vec3(matrix[0][2], matrix[1][2], matrix[2][2]);
-    planes[4].distance = matrix[3][2];
+    planes[4].normal = glm::vec3(matrix[0][3] + matrix[0][2], matrix[1][3] + matrix[1][2], matrix[2][3] + matrix[2][2]);
+    planes[4].distance = matrix[3][3] + matrix[3][2];
 
     // Far
     planes[5].normal = glm::vec3(matrix[0][3] - matrix[0][2], matrix[1][3] - matrix[1][2], matrix[2][3] - matrix[2][2]);
@@ -234,4 +299,30 @@ inline std::array<Plane, 6> extract_planes(const glm::mat4 &matrix)
     }
 
     return planes;
+}
+
+// Function to extract frustum vertices in world space
+inline std::vector<glm::vec3> extractFrustumVertices(const glm::mat4 &clipFromWorldScene)
+{
+    // Invert the CLIP_FROM_WORLD_SCENE matrix
+    glm::mat4 worldFromClipScene = glm::inverse(clipFromWorldScene);
+
+    // Define frustum corners in NDC
+    std::vector<glm::vec4> ndcCorners = {
+        glm::vec4(-1, -1, -1, 1), glm::vec4(1, -1, -1, 1),
+        glm::vec4(1, 1, -1, 1), glm::vec4(-1, 1, -1, 1),
+        glm::vec4(-1, -1, 1, 1), glm::vec4(1, -1, 1, 1),
+        glm::vec4(1, 1, 1, 1), glm::vec4(-1, 1, 1, 1)};
+
+    // Transform NDC corners to world space
+    std::vector<glm::vec3> frustumVertices;
+    for (const auto &corner : ndcCorners)
+    {
+        glm::vec4 worldCorner = worldFromClipScene * corner;
+        // Apply perspective division
+        frustumVertices.push_back(glm::vec3(worldCorner) / worldCorner.w);
+    }
+
+    // Return the 8 corners of the frustum in world space
+    return frustumVertices;
 }

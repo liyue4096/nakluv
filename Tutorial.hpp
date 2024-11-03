@@ -192,10 +192,9 @@ struct Tutorial : RTG::Application
 				float padding1[2] = {0.f, 0.f};
 
 			} light_obj;
-
+			glm::mat4 transform;
 			glm::vec4 position;
 			glm::quat quaternion;
-			// glm::mat4 transform;
 		};
 
 		// push constants
@@ -238,6 +237,8 @@ struct Tutorial : RTG::Application
 		{
 			mat4 CLIP_FROM_LOCAL;
 			mat4 WORLD_FROM_LOCAL;
+			mat4 WORLD_FROM_LOCAL_NORMAL;
+			mat4 WORLD_FROM_LOCAL_TANGENT;
 		};
 
 		struct Push
@@ -374,8 +375,10 @@ struct Tutorial : RTG::Application
 	VkImageView flat_disp_view = VK_NULL_HANDLE;
 	VkSampler disp_sampler = VK_NULL_HANDLE;
 
-	const uint32_t SHADOW_MAP_WIDTH = 2048;
-	const uint32_t SHADOW_MAP_HEIGHT = 2048;
+	size_t total_light_obj_cnt;
+	uint32_t shadow_map_grid_size;
+	const uint32_t SHADOW_MAP_WIDTH = 256;
+	const uint32_t SHADOW_MAP_HEIGHT = 256;
 	VkRenderPass shadow_map_render_pass = VK_NULL_HANDLE;
 	Helpers::AllocatedImage shadow_map;
 	VkImageView shadow_view = VK_NULL_HANDLE;
@@ -422,6 +425,8 @@ struct Tutorial : RTG::Application
 	void setup_shadow_views_sample();
 	void create_shadow_renderpass();
 	void create_shadow_framebuffer();
+	void set_shadow_viewport(RTG::RenderParams const &render_params, int row, int col);
+	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
 	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
 

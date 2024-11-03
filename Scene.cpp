@@ -791,7 +791,7 @@ void dfs_build_tree(Node *current_node, Node *parrent_node, std::vector<Node *> 
         // std::cout << "Node: " << current_node->name << " has a camera :" << current_node->camera_->name << "\n";
         if (current_node->light_)
         {
-            s72_scene.light_node_map[current_node->light_] = current_node;
+            s72_scene.light_node_map[current_node->light_].emplace_back(current_node);
         }
     }
 
@@ -1332,7 +1332,7 @@ void print_s72()
         printf("%s: %d, %d, tint: %f, %f, %f.\n", light.name.c_str(), light.shadow, light.type,
                light.tint.x, light.tint.y, light.tint.z);
 
-        Node *node_ = s72_scene.light_node_map[&light];
+        Node *node_ = s72_scene.light_node_map[&light].front();
         auto transform = s72_scene.transforms[node_];
 
         printf("%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n",

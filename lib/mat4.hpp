@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <glm/glm.hpp> // For glm::mat4
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 
 // NOTE: column-major storage order (like in OpenGL / GLSL):
 using mat4 = std::array<float, 16>;

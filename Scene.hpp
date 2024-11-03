@@ -293,7 +293,7 @@ struct S72_scene
     std::unordered_map<Mesh *, MaterialObject *> mesh_material_map;
     std::unordered_map<MaterialObject *, std::vector<int>> material_textureindex_map; // index 0: albedo, 1: normal map, 2: displacement map
     std::unordered_map<MaterialObject *, int> material_descriptor_index_map;
-    std::unordered_map<LightObject *, Node *> light_node_map;
+    std::unordered_map<LightObject *, std::vector<Node *>> light_node_map;
     std::vector<Node> nodes;
     std::vector<Mesh> meshes;
     std::vector<MaterialObject> materials;

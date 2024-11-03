@@ -10,7 +10,7 @@ layout(set=0,binding=0,std140) uniform World {
 };
 
 layout(push_constant) uniform Push {
-	int type;
+	int materialType_type;
 	int src_albedo;
 	int src_roughness;
 	int src_metalness;
@@ -19,7 +19,7 @@ layout(push_constant) uniform Push {
 	int padding0;
 	int padding1;
 	vec4 albedo;
-} materialType;
+} push;
 
 layout(set=2, binding=0) uniform sampler2D TEXTURE;
 layout(set=2, binding=1) uniform samplerCube TEXTURE_CUBEMAP;
@@ -28,6 +28,8 @@ layout(set=2, binding=3) uniform sampler2D DISPLACEMENT_MAP;
 layout(set=3, binding=0) readonly buffer LightBuffer{
 	Light lights[];
 };
+layout(set = 3, binding = 1) uniform sampler2D shadowMap;
+
 
 layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
@@ -81,6 +83,46 @@ vec3 total_diffuse(vec3 fragPos, vec3 normal) {
     return totalDiffuse;
 }
 
+int shadow_map_grid_size = (int(sqrt(lights.length()) + 4)) / 4 * 4;
+float shadow_map_width = 0.25;   // Width of each individual shadow map cell in normalized [0,1] coordinates
+float shadow_map_height = 0.25; 
+float shadowBias = 0.001;
+
+vec3 total_diffuse_shadow(vec3 fragPos, vec3 normal){
+	vec3 totalLight = vec3(0.0);
+	float shadow = 1.0;
+	int index = 0;
+
+    for (int i = 0; i < lights.length(); ++i) {
+		if(lights[i].light_obj.type != 2)	// support spot light at these stage
+			continue;
+
+
+		vec4 lightSpacePos = lights[i].transform * vec4(position, 1.0);
+		lightSpacePos /= lightSpacePos.w; // Perspective divide
+		lightSpacePos = lightSpacePos * 0.5 + 0.5; // Map to [0, 1]
+
+		int col = index % shadow_map_grid_size;
+		int row = index / shadow_map_grid_size;
+		float cellSize = 1.0 / float(shadow_map_grid_size);
+		
+		vec2 uv_offset = vec2(float(col) * cellSize, float(row) * cellSize);
+		vec2 atlasUV = uv_offset + lightSpacePos.xy * cellSize;
+
+		float shadowDepth = texture(shadowMap, atlasUV).r;
+        float currentDepth = lightSpacePos.z;
+
+        // Check if fragment is in shadow for the current light
+        shadow = currentDepth > shadowDepth + shadowBias ? 0.0 : 1.0;
+		
+		totalLight += compute_diffuse(lights[i], fragPos, normal) * shadow;
+
+		index++;
+    }
+
+	return totalLight;
+}
+
 const int PBR = 0;
 const int LAMBERTIAN = 1;
 const int MIRROR = 2;
@@ -104,7 +146,7 @@ void main() {
 	vec3 energy = (SKY_ENERGY * (0.5 * dot(n, SKY_DIRECTION) + 0.5)
 		+ SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION))) * 0.318309886;
 	
-    if (materialType.type == LAMBERTIAN || materialType.type == PBR) {
+    if (push.materialType_type == LAMBERTIAN || push.materialType_type == PBR) {
         // Sample and decode the normal map
         vec3 normal_tangent = texture(NORMAL_MAP, texCoord).rgb;
         normal_tangent = normal_tangent * 2.0 - 1.0;  // Convert from [0, 1] to [-1, 1]
@@ -117,12 +159,12 @@ void main() {
     }
 
 	vec3 envColor = vec3(0.0);
-	if(materialType.src_env == 1)
+	if(push.src_env == 1)
 		envColor = decodeRGBE(texture(TEXTURE_CUBEMAP, n));
 	//else
 	//	envColor = get_default_env_light();
 
-	if (materialType.type == ENVIRONMENT) {
+	if (push.materialType_type == ENVIRONMENT) {
         // cubemap
         vec4 cubemapColor = texture(TEXTURE_CUBEMAP, n);
 		//float packedFloat = texture(TEXTURE_CUBEMAP, n).x;
@@ -133,16 +175,16 @@ void main() {
 		outColor = vec4(energy * albedo, 1.0);
 		return;
     } 
-	else if(materialType.type == MIRROR){
+	else if(push.materialType_type == MIRROR){
     	vec4 reflectionColor = texture(TEXTURE_CUBEMAP, reflectDir);
     	albedo = decodeRGBE(reflectionColor);
 		// albedo = toneMapReinhard(albedo);
 		outColor = vec4(energy * albedo, 1.0);
 		return;
 	}
-	else if(materialType.type == LAMBERTIAN){
-		if(materialType.src_albedo == 0){
-			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+	else if(push.materialType_type == LAMBERTIAN){
+		if(push.src_albedo == 0){
+			albedo = vec3(push.albedo.r, push.albedo.g, push.albedo.b);
 			vec3 diffuseLight = envColor * albedo;	// how can i determine whether cubemap is bound?
 			outColor = vec4(diffuseLight, alpha);
 			//outColor = vec4(energy * albedo, alpha);
@@ -157,13 +199,14 @@ void main() {
 
 		// Calculate diffuse lighting with Lambertian albedo
         vec3 lighting = total_diffuse(displacedPosition, n) * albedo;
+		//vec3 lighting = total_diffuse_shadow(displacedPosition, n) * albedo;
 		outColor += vec4(lighting, alpha);
 		outColor *= 0.318309886;
 		return;
 	}
 	else {
-        if(materialType.src_albedo == 0){
-			albedo = vec3(materialType.albedo.r, materialType.albedo.g, materialType.albedo.b);
+        if(push.src_albedo == 0){
+			albedo = vec3(push.albedo.r, push.albedo.g, push.albedo.b);
 			vec3 diffuseLight = envColor * albedo;
 			outColor = vec4(diffuseLight, alpha);
 		}
@@ -174,6 +217,7 @@ void main() {
 			outColor = vec4(diffuseLight, alpha);
 		}
 		vec3 lighting = total_diffuse(displacedPosition, n) * albedo;
+		//vec3 lighting = total_diffuse_shadow(displacedPosition, n) * albedo;
 		outColor += vec4(lighting, alpha);
 		outColor *= 0.318309886;
 		return;

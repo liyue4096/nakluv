@@ -34,6 +34,8 @@ const main_objs = [
 	maek.CPP('lib/PosColVertex.cpp'),
 	maek.CPP('lib/PosNorTexVertex.cpp'),
 	maek.CPP('lib/SceneVertex.cpp'),
+	maek.CPP('lib/Plane.cpp'),
+	maek.CPP('lib/Frustum.cpp'),
 	maek.CPP('RTG.cpp'),
 	maek.CPP('helper/Helpers.cpp'),
 

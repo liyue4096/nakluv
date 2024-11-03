@@ -42,7 +42,7 @@ struct LightObject
 struct Light
 {
     LightObject light_obj;
-    // mat4 transform;
+    mat4 transform;
     vec4 position;
     vec4 quaternion;
 };
