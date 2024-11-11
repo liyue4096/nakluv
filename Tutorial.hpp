@@ -385,6 +385,12 @@ struct Tutorial : RTG::Application
 	VkSampler shadow_sampler = VK_NULL_HANDLE;
 	VkFramebuffer shadow_map_framebuffer = VK_NULL_HANDLE;
 
+	//--------------------- terrain
+	Helpers::AllocatedImage terrain_image;
+	VkImageView terrain_view = VK_NULL_HANDLE;
+	VkSampler terrain_sampler = VK_NULL_HANDLE;
+	//---------------------
+
 	struct MaterialTexture
 	{
 		MaterialType type;
@@ -427,6 +433,8 @@ struct Tutorial : RTG::Application
 	void create_shadow_framebuffer();
 	void set_shadow_viewport(RTG::RenderParams const &render_params, int row, int col);
 	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
+
+	void prepare_terrain();
 
 	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
 

@@ -65,6 +65,7 @@ struct Helpers
 		// NOTE: could define default constructor, move constructor, move assignment, destructor for a bit more paranoia
 	};
 
+	AllocatedImage create_image(VkExtent3D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
 	AllocatedImage create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
 	AllocatedImage create_cubemap_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
 	void destroy_image(AllocatedImage &&allocated_image);

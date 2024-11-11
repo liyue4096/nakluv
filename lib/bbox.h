@@ -89,27 +89,25 @@ struct BBox
     // Transform box by a matrix
     BBox transform(const glm::mat4 &trans)
     {
-        glm::vec3 amin = min, amax = max;
-        min = max = glm::vec3(trans[3]);
-        for (uint32_t i = 0; i < 3; i++)
+        glm::vec3 corners[8] = {
+            {min.x, min.y, min.z},
+            {max.x, min.y, min.z},
+            {min.x, max.y, min.z},
+            {max.x, max.y, min.z},
+            {min.x, min.y, max.z},
+            {max.x, min.y, max.z},
+            {min.x, max.y, max.z},
+            {max.x, max.y, max.z}};
+
+        BBox bbox;
+
+        // Transform each corner and update new bounds
+        for (const auto &corner : corners)
         {
-            for (uint32_t j = 0; j < 3; j++)
-            {
-                float a = trans[j][i] * amin[j];
-                float b = trans[j][i] * amax[j];
-                if (a < b)
-                {
-                    min[i] += a;
-                    max[i] += b;
-                }
-                else
-                {
-                    min[i] += b;
-                    max[i] += a;
-                }
-            }
+            glm::vec3 transformedCorner = glm::vec3(trans * glm::vec4(corner, 1.0f));
+            bbox.enclose(transformedCorner);
         }
-        return *this;
+        return bbox;
     }
 
     // bool hit(const Ray &ray, Vec2 &times) const
@@ -236,7 +234,7 @@ struct BBox
 
     bool is_bbox_outside_frustum_1(const std::array<BBox::Plane, 6> &planes)
     {
-        glm::vec3 mid = (max + min) * 0.5f; // Center of the bounding box
+        glm::vec3 mid = this->center(); // Center of the bounding sphere
         float radius = glm::distance(max, min) * 0.5f;
 
         for (const auto &plane : planes)

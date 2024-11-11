@@ -1,0 +1,258 @@
+["s72-v2",
+{
+	"type":"MATERIAL",
+	"name":"lambertian:checker",
+	"lambertian":{
+		"albedo":{ "src":"..\\checker.png", "format":"srgb" }
+	}
+},
+{
+	"type":"MESH",
+	"name":"Tile-Floor-Small",
+	"topology":"TRIANGLE_LIST",
+	"count":36,
+	"attributes":{
+		"POSITION":{ "src":"lights-test11.Tile-Floor-Small.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"lights-test11.Tile-Floor-Small.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"lights-test11.Tile-Floor-Small.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"lights-test11.Tile-Floor-Small.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"lambertian:checker"
+},
+{
+	"type":"NODE",
+	"name":"Tile-Floor.007",
+	"translation":[0,4,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Tile-Floor-Small"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:checker",
+	"normalMap":{ "src":"stone_tiles_nor_gl_1k.png", "format":"linear" },
+	"displacementMap":{ "src":"stone_tiles_disp_1k.png", "format":"linear" },
+	"pbr":{
+		"albedo":{ "src":"stone_tiles_diff_1k.png", "format":"srgb" },
+		"roughness":{ "src":"stone_tiles_rough_1k.png", "format":"linear" },
+		"metalness":0
+	}
+},
+{
+	"type":"MESH",
+	"name":"Stone-Floor-Small",
+	"topology":"TRIANGLE_LIST",
+	"count":36,
+	"attributes":{
+		"POSITION":{ "src":"lights-test11.Stone-Floor-Small.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"lights-test11.Stone-Floor-Small.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"lights-test11.Stone-Floor-Small.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"lights-test11.Stone-Floor-Small.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:checker"
+},
+{
+	"type":"NODE",
+	"name":"Stone-Floor.007",
+	"translation":[0,-4,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Stone-Floor-Small"
+},
+{
+	"type":"MESH",
+	"name":"Sphere",
+	"topology":"TRIANGLE_LIST",
+	"count":2880,
+	"attributes":{
+		"POSITION":{ "src":"lights-test11.Sphere.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"lights-test11.Sphere.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"lights-test11.Sphere.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"lights-test11.Sphere.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"lambertian:checker"
+},
+{
+	"type":"NODE",
+	"name":"Sphere",
+	"translation":[-3,0.659676,1],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Sphere"
+},
+{
+	"type":"MESH",
+	"name":"Cube",
+	"topology":"TRIANGLE_LIST",
+	"count":36,
+	"attributes":{
+		"POSITION":{ "src":"lights-test11.Cube.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"lights-test11.Cube.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"lights-test11.Cube.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"lights-test11.Cube.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"lambertian:checker"
+},
+{
+	"type":"NODE",
+	"name":"Cube",
+	"translation":[-0.541634,-0.345989,1.03033],
+	"rotation":[0,0,0.241283,0.970455],
+	"scale":[1,1,1],
+	"mesh":"Cube"
+},
+{
+	"type":"MESH",
+	"name":"Sphere-Stone",
+	"topology":"TRIANGLE_LIST",
+	"count":2880,
+	"attributes":{
+		"POSITION":{ "src":"lights-test11.Sphere-Stone.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"lights-test11.Sphere-Stone.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"lights-test11.Sphere-Stone.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"lights-test11.Sphere-Stone.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:checker"
+},
+{
+	"type":"NODE",
+	"name":"Sphere.001",
+	"translation":[-0.634171,-0.629304,2.5],
+	"rotation":[0,0,0,1],
+	"scale":[0.5,0.5,0.5],
+	"mesh":"Sphere-Stone"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Camera-Shadow128",
+	"perspective":{
+		"aspect":1.2,
+		"vfov":0.589921,
+		"near":0.1,
+		"far":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Camera-Shadow128",
+	"translation":[0.0670192,5.7348,10.0919],
+	"rotation":[0.0151331,0.26681,0.962084,0.0545682],
+	"scale":[1,1,1],
+	"camera":"Camera-Shadow128"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Camera-Shadow64",
+	"perspective":{
+		"aspect":1.2,
+		"vfov":0.589921,
+		"near":0.1,
+		"far":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Camera-Shadow64",
+	"translation":[0.0670192,13.7348,10.0919],
+	"rotation":[0.0151331,0.26681,0.962084,0.0545682],
+	"scale":[1,1,1],
+	"camera":"Camera-Shadow64"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Camera-Shadow256",
+	"perspective":{
+		"aspect":1.2,
+		"vfov":0.589921,
+		"near":0.1,
+		"far":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Camera-Shadow256",
+	"translation":[0.0670192,-2.2652,10.0919],
+	"rotation":[0.0151331,0.26681,0.962084,0.0545682],
+	"scale":[1,1,1],
+	"camera":"Camera-Shadow256"
+},
+{
+
+	"type":"LIGHT",
+	"name":"Spot-Shadow128",
+	"tint":[1, 1, 1],
+	"spot":{
+		"radius":0,
+		"power":500,
+		"fov":0.927293,
+		"blend":0.5
+	},
+	"shadow":128
+},
+{
+	"type":"NODE",
+	"name":"Spot-Shadow128",
+	"translation":[-6,0,7.65133],
+	"rotation":[0,-0.382683,0,0.92388],
+	"scale":[1,1,1],
+	"light":"Spot-Shadow128"
+},
+{
+
+	"type":"LIGHT",
+	"name":"Spot-Shadow256",
+	"tint":[1, 1, 1],
+	"spot":{
+		"radius":0,
+		"power":500,
+		"fov":0.927293,
+		"blend":0.5
+	},
+	"shadow":256
+},
+{
+	"type":"NODE",
+	"name":"Spot-Shadow256",
+	"translation":[-6,-8,7.65133],
+	"rotation":[0,-0.382683,0,0.92388],
+	"scale":[1,1,1],
+	"light":"Spot-Shadow256"
+},
+{
+
+	"type":"LIGHT",
+	"name":"Spot-Shadow64",
+	"tint":[1, 1, 1],
+	"spot":{
+		"radius":0,
+		"power":500,
+		"fov":0.927293,
+		"blend":0.5
+	},
+	"shadow":64
+},
+{
+	"type":"NODE",
+	"name":"Spot-Shadow64",
+	"translation":[-6,8,7.65133],
+	"rotation":[0,-0.382683,0,0.92388],
+	"scale":[1,1,1],
+	"light":"Spot-Shadow64"
+},
+{
+	"type":"NODE",
+	"name":"Empty",
+	"translation":[0,0,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"children":["Spot-Shadow128", "Spot-Shadow256", "Spot-Shadow64"]
+},
+{
+	"type":"SCENE",
+	"name":"lights.blend",
+	"roots":["Tile-Floor.007", "Stone-Floor.007", "Sphere", "Cube", "Sphere.001", "Camera-Shadow128", "Camera-Shadow64", "Camera-Shadow256", "Empty"]
+}
+]

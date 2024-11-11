@@ -75,7 +75,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		set_scene_objects(vertices);
 		// load_vertex_from_b72(vertices);
-		print_s72();
+		// print_s72();
 
 		size_t bytes = vertices.size() * sizeof(vertices[0]);
 
@@ -130,6 +130,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 		setup_shadow_image();
 		setup_shadow_views_sample();
 		create_shadow_framebuffer();
+	}
+
+	{ // terrain
+		if (s72_scene.terrain.name != "")
+		{
+			prepare_terrain();
+		}
 	}
 
 	start = std::chrono::high_resolution_clock::now();
@@ -493,7 +500,6 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 	framebuffer = swapchain_framebuffers[render_params.image_index];
 
 	// record (into `workspace.command_buffer`) commands that run a `render_pass` that just clears `framebuffer`:
-	// refsol::Tutorial_render_record_blank_frame(rtg, render_pass, framebuffer, &workspace.command_buffer);
 	// reset the command buffer (clear old commands):
 	VK(vkResetCommandBuffer(workspace.command_buffer, 0));
 
@@ -1213,9 +1219,10 @@ void Tutorial::update(float dt)
 					std::string node_name = driver.refnode_name;
 					Node *node_ = s72_scene.nodes_map[node_name];
 					driver.make_animation(playmode.time);
-					s72_scene.transforms[node_] = node_->make_local_to_world();
+					// s72_scene.transforms[node_] = node_->make_local_to_world();
 
 					node_->child_forward_kinematics_transforms(node_);
+					s72_scene.transforms[node_] = node_->make_local_to_world();
 					//   WORLD_FROM_LOCAL *= ANIMATION_MATRIX;
 				}
 			}
@@ -1259,6 +1266,8 @@ void Tutorial::update(float dt)
 				}
 			}
 
+			// std::cout << std::endl;
+
 			for (const auto &scene_object : scene_objects)
 			{
 				Node *node_ = scene_object.object_node_;
@@ -1280,13 +1289,30 @@ void Tutorial::update(float dt)
 				WORLD_FROM_LOCAL = obj_transform;
 
 				// culling
-				if (playmode.camera_mode == DEBUG || playmode.cull_mode == FRUSTUM) // (playmode.cull_mode == FRUSTUM)
+				if (playmode.camera_mode == DEBUG || playmode.cull_mode == FRUSTUM)
 				{
-					BBox bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(s72_scene.transforms[node_]);
+					uint32_t index = uint32_t(&scene_object - &scene_objects[0]);
+
+					assert(s72_scene.mesh_bbox_map.find(mesh_) != s72_scene.mesh_bbox_map.end());
+
+					BBox bbox_trans = s72_scene.mesh_bbox_map[mesh_];
+
+					printf("%s, index %d, min:%f, %f, %f, max:%f, %f, %f, bbox center %f, %f, %f, r: %f\n", node_->name.c_str(), index,
+						   bbox_trans.min.x, bbox_trans.min.y, bbox_trans.min.z,
+						   bbox_trans.max.x, bbox_trans.max.y, bbox_trans.max.z,
+						   bbox_trans.center().x, bbox_trans.center().y, bbox_trans.center().z,
+						   glm::distance(bbox_trans.max, bbox_trans.min) * 0.5f);
+
+					bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(WORLD_FROM_LOCAL); // bug
 					auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
 					// auto vertices = extractFrustumVertices(CLIP_FROM_WORLD_SCENE);
 					//  auto frustum = Frustum::createFrustumFromMatrix(CLIP_FROM_WORLD_SCENE);
-					if (bbox_trans.is_bbox_outside_frustum_1(planes)) // || bbox_trans.is_bbox_intersecting_frustum_1(planes))
+
+					printf("%s, index %d, bbox center %f, %f, %f, r: %f\n", node_->name.c_str(), index,
+						   bbox_trans.center().x, bbox_trans.center().y, bbox_trans.center().z,
+						   glm::distance(bbox_trans.max, bbox_trans.min) * 0.5f);
+
+					if (bbox_trans.is_bbox_outside_frustum_1(planes))
 					{
 						continue;
 					}
@@ -2246,6 +2272,51 @@ void Tutorial::create_shadow_framebuffer()
 	vkCreateFramebuffer(rtg.device, &fb_info, NULL, &shadow_map_framebuffer);
 }
 
+void Tutorial::prepare_terrain()
+{
+	uint32_t length = (uint32_t)s72_scene.terrain.length;
+
+	terrain_image = rtg.helpers.create_image(
+		VkExtent3D{.width = length, .height = length, .depth = length}, // size of image
+		VK_FORMAT_R8_UNORM,												// how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+		Helpers::Unmapped);
+
+	VkSamplerCreateInfo sampler = {};
+	sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	sampler.magFilter = VK_FILTER_LINEAR;
+	sampler.minFilter = VK_FILTER_LINEAR;
+	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	sampler.mipLodBias = 0.0f;
+	sampler.compareOp = VK_COMPARE_OP_NEVER;
+	sampler.minLod = 0.0f;
+	sampler.maxLod = 0.0f;
+	sampler.maxAnisotropy = 1.0;
+	sampler.anisotropyEnable = VK_FALSE;
+	sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+	VK(vkCreateSampler(rtg.device, &sampler, nullptr, &terrain_sampler));
+
+	// Create image view
+	VkImageViewCreateInfo view = {};
+	view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	view.image = terrain_image.handle;
+	view.viewType = VK_IMAGE_VIEW_TYPE_3D;
+	view.format = terrain_image.format;
+	view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	view.subresourceRange.baseMipLevel = 0;
+	view.subresourceRange.baseArrayLayer = 0;
+	view.subresourceRange.layerCount = 1;
+	view.subresourceRange.levelCount = 1;
+
+	VK(vkCreateImageView(rtg.device, &view, nullptr, &terrain_view));
+}
+
 void Tutorial::setup_texture_descriptor_pool()
 {
 	// create the texture descriptor pool
@@ -2841,6 +2912,8 @@ void Tutorial::set_mesh_vertices_map(std::vector<SceneVertex> &vertices)
 
 		// save in global
 		s72_scene.mesh_bbox_map[&mesh] = bbox;
+		printf("bbox %s: min: %f, %f, %f; max: %f, %f, %f\n", mesh.name.c_str(), bbox.min.x, bbox.min.y, bbox.min.z,
+			   bbox.max.x, bbox.max.y, bbox.max.z);
 
 		// Set vertex count in object_vertices
 		mesh_vertices.count = mesh.count;
@@ -2851,6 +2924,13 @@ void Tutorial::set_mesh_vertices_map(std::vector<SceneVertex> &vertices)
 		//		  << mesh_vertices.count << "\n";
 
 		file.close();
+	}
+
+	for (auto &i : s72_scene.mesh_bbox_map)
+	{
+		printf("bbox %s: mid: %f, %f, %f; r: %f\n", i.first->name.c_str(),
+			   i.second.center().x, i.second.center().y, i.second.center().z,
+			   glm::distance(i.second.max, i.second.min) * 0.5f);
 	}
 }
 
@@ -2886,6 +2966,10 @@ void Tutorial::set_scene_objects(std::vector<SceneVertex> &vertices)
 		scene_object.transform = combined_matrix;
 		scene_object.object_node_ = &node;
 		scene_object.object_mesh_ = node.mesh_;
+
+		uint32_t index = uint32_t(&node - &s72_scene.nodes[0]);
+
+		printf("index%d %s: %s \n", index, node.name.c_str(), node.mesh_->name.c_str());
 
 		scene_objects.push_back(scene_object);
 	}

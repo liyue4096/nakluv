@@ -281,6 +281,15 @@ struct LightObject
     } data;
 };
 
+struct PTerrainObject
+{
+    std::string name;
+    int length;
+    int block_size;
+    std::string control_image;
+    std::string noise_source;
+};
+
 struct S72_scene
 {
     struct Scene scene;
@@ -305,6 +314,7 @@ struct S72_scene
     Camera_Mode camera_mode = SCENE;
     Camera *current_camera_;
     Environment environment; // unique
+    PTerrainObject terrain;
 };
 
 void get_scene(const std::vector<sejp::value> &array);

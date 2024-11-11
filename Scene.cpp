@@ -665,6 +665,34 @@ void get_scene(const std::vector<sejp::value> &array)
 
                 s72_scene.lights.push_back(light);
             }
+
+            else if (type_opt->second.as_string().value() == "PTERRAIN")
+            {
+
+                // Get "name" field
+                if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
+                {
+                    s72_scene.terrain.name = name_opt->second.as_string().value();
+                }
+                // Get "length" field
+                if (auto length_opt = obj.find("length"); length_opt != obj.end() && length_opt->second.as_number())
+                {
+                    s72_scene.terrain.length = static_cast<uint32_t>(length_opt->second.as_number().value_or(0));
+                }
+                // Get "blocksize" field
+                if (auto blocksize_opt = obj.find("count"); blocksize_opt != obj.end() && blocksize_opt->second.as_number())
+                {
+                    s72_scene.terrain.block_size = static_cast<uint32_t>(blocksize_opt->second.as_number().value_or(0));
+                }
+                if (auto control_image_opt = obj.find("controlImage"); control_image_opt != obj.end() && control_image_opt->second.as_string())
+                {
+                    s72_scene.terrain.control_image = control_image_opt->second.as_string().value();
+                }
+                if (auto noise_source_opt = obj.find("noiseSource"); noise_source_opt != obj.end() && noise_source_opt->second.as_string())
+                {
+                    s72_scene.terrain.name = noise_source_opt->second.as_string().value();
+                }
+            }
         }
 
         index++;
