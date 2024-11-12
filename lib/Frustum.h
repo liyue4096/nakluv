@@ -2,7 +2,8 @@
 
 #include <glm/glm.hpp>
 #include "Plane.h"
-#include "bbox.h"
+#include "Bbox.h"
+#include "Camera_new.h"
 
 /* cr. structure reference from Learn OpenGL: https://learnopengl.com/Guest-Articles/2021/Scene/Frustum-Culling */
 struct Frustum
@@ -17,6 +18,7 @@ struct Frustum
     Frustum() = default;
     ~Frustum() = default;
 
+    static Frustum createFrustumFromCamera(const Camera_new &camera);
     static Frustum createFrustumFromMatrix(const glm::mat4 &cilp_from_world);
     bool isBBoxInFrustum(BBox &bbox);
 };

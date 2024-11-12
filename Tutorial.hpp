@@ -2,7 +2,7 @@
 #include "lib/PosColVertex.hpp"
 #include "lib/PosNorTexVertex.hpp"
 #include "lib/SceneVertex.hpp"
-#include "lib/mat4.hpp"
+#include "lib/Mat4.hpp"
 #include "RTG.hpp"
 #include "Scene.hpp"
 
@@ -499,12 +499,13 @@ struct Tutorial : RTG::Application
 		{
 			uint8_t downs = 0;
 			uint8_t pressed = 0;
-		} left, right, down, up;
+		} left, right, down, up, forward, back, left_mouse;
 
 		Camera_Mode camera_mode = SCENE;
 		Animation_Mode animation_mode = PAUSE;
 		Cull_Mode cull_mode = DEFAULT;
 		float time = 0.f; // this is for antimation, it will pause when animation_mode = PAUSE
+		float scroll_distance = 0.0f;
 
 		struct MouseState
 		{

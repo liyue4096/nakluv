@@ -8,7 +8,7 @@
 #include <ostream>
 #include <vector>
 
-#include "mat4.hpp"
+#include "Mat4.hpp"
 // #include "ray.h"
 // #include "vec2.h"
 // #include "vec3.h"
@@ -239,12 +239,15 @@ struct BBox
 
         for (const auto &plane : planes)
         {
+            uint32_t index = uint32_t(&plane - &planes[0]);
+
             // Calculate the signed distance from the bounding box center to the plane
             float distance = glm::dot(plane.normal, mid) - plane.distance;
 
             // If the bounding box is completely outside this plane, return false
-            if (distance > radius)
+            if (distance > abs(radius))
             {
+                printf("  cull by face %d: ", index);
                 return true; // No intersection with the frustum
             }
         }

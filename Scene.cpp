@@ -259,11 +259,13 @@ void get_scene(const std::vector<sejp::value> &array)
             else if (type_opt->second.as_string().value() == "CAMERA")
             {
                 Camera camera;
+                Camera_new cameraObj;
 
                 // Get "name" field
                 if (auto name_opt = obj.find("name"); name_opt != obj.end() && name_opt->second.as_string())
                 {
                     camera.name = name_opt->second.as_string().value();
+                    cameraObj.name = camera.name;
                 }
 
                 // Get "perspective" field
@@ -275,29 +277,36 @@ void get_scene(const std::vector<sejp::value> &array)
                     if (auto aspect_opt = perspective_obj.find("aspect"); aspect_opt != perspective_obj.end() && aspect_opt->second.as_number())
                     {
                         camera.perspective.aspect = static_cast<float>(aspect_opt->second.as_number().value_or(0.f));
+                        cameraObj.camera_attributes.aspect = camera.perspective.aspect;
                     }
 
                     // Get "vfov" field
                     if (auto vfov_opt = perspective_obj.find("vfov"); vfov_opt != perspective_obj.end() && vfov_opt->second.as_number())
                     {
                         camera.perspective.vfov = static_cast<float>(vfov_opt->second.as_number().value_or(0.f));
+                        cameraObj.camera_attributes.vfov = camera.perspective.vfov;
                     }
 
                     // Get "near" field
                     if (auto near_opt = perspective_obj.find("near"); near_opt != perspective_obj.end() && near_opt->second.as_number())
                     {
                         camera.perspective.near = static_cast<float>(near_opt->second.as_number().value_or(0.f));
+                        cameraObj.camera_attributes.near = camera.perspective.near;
                     }
 
                     // Get "far" field
                     if (auto far_opt = perspective_obj.find("far"); far_opt != perspective_obj.end() && far_opt->second.as_number())
                     {
                         camera.perspective.far = static_cast<float>(far_opt->second.as_number().value_or(0.f));
+                        cameraObj.camera_attributes.far = camera.perspective.far;
                     }
                 }
 
                 // Add the parsed camera to the cameras vector
                 s72_scene.cameras.push_back(camera);
+                s72_scene.cameras_new.push_back(cameraObj);
+
+                s72_scene.cameraObject_map[camera.name] = &s72_scene.cameras_new.back();
             }
 
             // parse msg to Driver
@@ -946,6 +955,7 @@ void scene_workflow(sejp::value &val)
 void make_user_camera()
 {
     Camera camera;
+    Camera_new camera_obj;
 
     camera.name = "User-Camera";
     camera.perspective.aspect = 1.77778f;
@@ -953,7 +963,15 @@ void make_user_camera()
     camera.perspective.near = 0.1f;
     camera.perspective.far = 1000.f;
 
+    camera_obj.name = camera.name;
+    camera_obj.camera_attributes.aspect = camera.perspective.aspect;
+    camera_obj.camera_attributes.vfov = camera.perspective.vfov;
+    camera_obj.camera_attributes.near = camera.perspective.near;
+    camera_obj.camera_attributes.far = camera.perspective.far;
+
     s72_scene.cameras.push_back(camera);
+    s72_scene.cameras_new.push_back(camera_obj);
+    s72_scene.cameraObject_map[camera.name] = &s72_scene.cameras_new.back();
 
     Node node;
     std::vector<Node *> path;
@@ -1383,6 +1401,8 @@ void print_s72()
                    light.data.spot.radius, light.data.spot.power, light.data.spot.fov, light.data.spot.blend, light.data.spot.limit);
         }
     }
+
+    printf("camera cnt: %zd, %zd\n", s72_scene.cameras_path.size(), s72_scene.cameraObject_map.size());
 
     // std::cin.get();
     /*

@@ -21,8 +21,9 @@
 #include <filesystem>
 
 #include "include/sejp/sejp.hpp"
-#include "lib/bbox.h"
+#include "lib/Bbox.h"
 #include "lib/Frustum.h"
+#include "lib/Camera_new.h"
 
 #include "include/stb/stb_image.h"
 
@@ -75,7 +76,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 		set_scene_objects(vertices);
 		// load_vertex_from_b72(vertices);
-		// print_s72();
+		print_s72();
 
 		size_t bytes = vertices.size() * sizeof(vertices[0]);
 
@@ -1233,9 +1234,14 @@ void Tutorial::update(float dt)
 				{
 					s72_scene.current_camera_ = &(s72_scene.cameras[0]);
 				}
+				if (s72_scene.current_camera_new_ == nullptr)
+				{
+					s72_scene.current_camera_new_ = &(s72_scene.cameras_new[0]);
+				}
 
 				// for this camera, calculate the WORLD_FROM_LOCAL from path
 				std::string camera_name = s72_scene.current_camera_->name; // Assuming the first camera
+				camera_name = s72_scene.current_camera_new_->name;
 				if (s72_scene.cameras_path.find(camera_name) != s72_scene.cameras_path.end())
 				{
 					float aspect = s72_scene.current_camera_->perspective.aspect;
@@ -1255,7 +1261,8 @@ void Tutorial::update(float dt)
 
 					CULL = mat_perspective;
 
-					CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
+					// CLIP_FROM_WORLD_SCENE = mat_perspective * glm::mat4(camera_node_->make_world_to_local());
+					CLIP_FROM_WORLD_SCENE = s72_scene.current_camera_new_->apply_scene_mode_camera(*s72_scene.current_camera_new_);
 
 					glm::vec3 eye_world_position = glm::vec3(camera_node_->make_local_to_world() * glm::vec4(0.f, 0.f, 0.f, 1.0f));
 
@@ -1291,31 +1298,31 @@ void Tutorial::update(float dt)
 				// culling
 				if (playmode.camera_mode == DEBUG || playmode.cull_mode == FRUSTUM)
 				{
-					uint32_t index = uint32_t(&scene_object - &scene_objects[0]);
+					// uint32_t index = uint32_t(&scene_object - &scene_objects[0]);
 
 					assert(s72_scene.mesh_bbox_map.find(mesh_) != s72_scene.mesh_bbox_map.end());
 
 					BBox bbox_trans = s72_scene.mesh_bbox_map[mesh_];
 
-					printf("%s, index %d, min:%f, %f, %f, max:%f, %f, %f, bbox center %f, %f, %f, r: %f\n", node_->name.c_str(), index,
-						   bbox_trans.min.x, bbox_trans.min.y, bbox_trans.min.z,
-						   bbox_trans.max.x, bbox_trans.max.y, bbox_trans.max.z,
-						   bbox_trans.center().x, bbox_trans.center().y, bbox_trans.center().z,
-						   glm::distance(bbox_trans.max, bbox_trans.min) * 0.5f);
+					Frustum camera_frustum = Frustum::createFrustumFromCamera(*s72_scene.current_camera_new_);
 
-					bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(WORLD_FROM_LOCAL); // bug
-					auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
-					// auto vertices = extractFrustumVertices(CLIP_FROM_WORLD_SCENE);
-					//  auto frustum = Frustum::createFrustumFromMatrix(CLIP_FROM_WORLD_SCENE);
-
-					printf("%s, index %d, bbox center %f, %f, %f, r: %f\n", node_->name.c_str(), index,
-						   bbox_trans.center().x, bbox_trans.center().y, bbox_trans.center().z,
-						   glm::distance(bbox_trans.max, bbox_trans.min) * 0.5f);
-
-					if (bbox_trans.is_bbox_outside_frustum_1(planes))
+					bbox_trans = s72_scene.mesh_bbox_map[mesh_].transform(WORLD_FROM_LOCAL);
+					if (!camera_frustum.isBBoxInFrustum(bbox_trans))
 					{
+						// std::cout << "Culling node " << node_->name << std::endl;
 						continue;
 					}
+
+					// auto planes = extract_planes(CLIP_FROM_WORLD_SCENE);
+
+					// printf("%s, index %d, bbox center %f, %f, %f, r: %f\n", node_->name.c_str(), index,
+					// 	   bbox_trans.center().x, bbox_trans.center().y, bbox_trans.center().z,
+					// 	   glm::distance(bbox_trans.max, bbox_trans.min) * 0.5f);
+
+					// if (bbox_trans.is_bbox_outside_frustum_1(planes))
+					// {
+					// 	continue;
+					// }
 				}
 
 				ScenesObjectInstance obj{
@@ -2631,7 +2638,22 @@ void Tutorial::on_input(InputEvent const &evt)
 						break;
 					}
 				}
-				std::cout << "Switch to another scene camera. Current camera name: " << s72_scene.current_camera_->name << "\n";
+
+				auto it_camera_new = s72_scene.cameras_new.begin();
+				for (; it_camera_new != s72_scene.cameras_new.end(); ++it_camera_new)
+				{
+					if (it_camera_new->name == s72_scene.current_camera_new_->name && it_camera_new != s72_scene.cameras_new.end() - 1)
+					{
+						s72_scene.current_camera_new_ = &(*(it_camera_new + 1));
+						break;
+					}
+					else if (it_camera_new->name == s72_scene.current_camera_new_->name && it_camera_new == s72_scene.cameras_new.end() - 1)
+					{
+						s72_scene.current_camera_new_ = &(s72_scene.cameras_new[0]);
+						break;
+					}
+				}
+				std::cout << "Switch to another scene camera. Current camera name: " << s72_scene.current_camera_new_->name << "\n";
 			}
 			else
 			{
@@ -2685,11 +2707,25 @@ void Tutorial::on_input(InputEvent const &evt)
 			else if (evt.key.key == GLFW_KEY_W)
 			{
 				// std::cout << "camera move up	 ";
+				playmode.forward.downs += 1;
+				playmode.forward.pressed = true;
+				return;
+			}
+			else if (evt.key.key == GLFW_KEY_S)
+			{
+				// std::cout << "camera move up	 ";
+				playmode.back.downs += 1;
+				playmode.back.pressed = true;
+				return;
+			}
+			else if (evt.key.key == GLFW_KEY_E)
+			{
+				// std::cout << "camera move up	 ";
 				playmode.up.downs += 1;
 				playmode.up.pressed = true;
 				return;
 			}
-			else if (evt.key.key == GLFW_KEY_S)
+			else if (evt.key.key == GLFW_KEY_LEFT_CONTROL)
 			{
 				// std::cout << "camera move down	 ";
 				playmode.down.downs += 1;
@@ -2712,16 +2748,52 @@ void Tutorial::on_input(InputEvent const &evt)
 		}
 		else if (evt.key.key == GLFW_KEY_W)
 		{
-			playmode.up.pressed = false;
+			playmode.forward.pressed = false;
 			return;
 		}
 		else if (evt.key.key == GLFW_KEY_S)
+		{
+			playmode.back.pressed = false;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_E)
+		{
+			playmode.up.pressed = false;
+			return;
+		}
+		else if (evt.key.key == GLFW_KEY_LEFT_CONTROL)
 		{
 			playmode.down.pressed = false;
 			return;
 		}
 	}
-	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseMotion)
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseWheel)
+	{
+		playmode.forward.pressed = true;
+		playmode.scroll_distance += evt.wheel.y;
+		playmode.forward.pressed = false;
+		return;
+	}
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseButtonDown)
+	{
+		if (evt.button.button == GLFW_MOUSE_BUTTON_LEFT || evt.button.button == GLFW_MOUSE_BUTTON_RIGHT)
+		{
+			double xpos, ypos;
+			glfwGetCursorPos(rtg.window, &xpos, &ypos);
+			playmode.mouse_state.last_x = static_cast<float>(xpos);
+			playmode.mouse_state.last_y = static_cast<float>(ypos);
+			playmode.left_mouse.pressed = true; // Set to true when the button is pressed
+		}
+	}
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseButtonUp)
+	{
+		if (evt.button.button == GLFW_MOUSE_BUTTON_LEFT || evt.button.button == GLFW_MOUSE_BUTTON_RIGHT)
+		{
+			playmode.left_mouse.pressed = false; // Set to true when the button is pressed
+			return;
+		}
+	}
+	else if (playmode.camera_mode == USER && evt.type == InputEvent::MouseMotion && playmode.left_mouse.pressed)
 	{
 		if (s72_scene.current_camera_ != nullptr)
 		{
@@ -2730,8 +2802,11 @@ void Tutorial::on_input(InputEvent const &evt)
 			float rotation_coefficient = 0.5f;
 			float delta_x = evt.motion.x - playmode.mouse_state.last_x;
 			float delta_y = evt.motion.y - playmode.mouse_state.last_y;
-			glm::vec2 motion = glm::vec2(rotation_coefficient * delta_x / float(width),
-										 rotation_coefficient * (-delta_y) / float(height));
+			float distance_dragged = glm::length(glm::vec2(delta_x, delta_y));
+			float adjusted_rotation_coefficient = rotation_coefficient * (distance_dragged / 2.0f);
+
+			glm::vec2 motion = glm::vec2(adjusted_rotation_coefficient * delta_x / float(width),
+										 adjusted_rotation_coefficient * (-delta_y) / float(height));
 
 			// std::cout << "mouse move: " << motion.x << ", " << motion.y << "    ";
 
@@ -2788,7 +2863,7 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 	{
 		// combine inputs into a move:
 		constexpr float PlayerSpeed = 6.f;
-		glm::vec2 move = glm::vec2(0.0f);
+		glm::vec3 move = glm::vec3(0.0f);
 		if (playmode.left.pressed && !playmode.right.pressed)
 			move.x = -1.0f;
 		if (!playmode.left.pressed && playmode.right.pressed)
@@ -2797,17 +2872,26 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 			move.y = -1.0f;
 		if (!playmode.down.pressed && playmode.up.pressed)
 			move.y = 1.0f;
+		if (playmode.forward.pressed && !playmode.back.pressed)
+			move.z = 1.0f;
+		if (!playmode.forward.pressed && playmode.back.pressed)
+			move.z = -1.0f;
+		if (playmode.scroll_distance != 0)
+		{
+			move.z = playmode.scroll_distance;
+			playmode.scroll_distance = 0.f;
+		}
 
 		// make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f))
+		if (move != glm::vec3(0.0f))
 			move = glm::normalize(move) * PlayerSpeed * elapsed;
 
 		glm::mat4x3 frame = node_->make_local_to_parent();
 		glm::vec3 frame_right = frame[0];
-		// glm::vec3 up = frame[1];
+		glm::vec3 frame_up = frame[1];
 		glm::vec3 frame_forward = -frame[2];
 
-		node_->position += move.x * frame_right + move.y * frame_forward;
+		node_->position += move.x * frame_right + move.y * frame_up + move.z * frame_forward;
 
 		s72_scene.transforms[node_] = node_->make_local_to_world();
 
