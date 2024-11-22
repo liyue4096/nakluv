@@ -377,8 +377,8 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this)
 			{
 				uint32_t i = uint32_t(&queue_family - &queue_families[0]);
 
-				// if it does graphics, set the graphics queue family:
-				if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+				// if it does graphics or compute, set the graphics queue family:
+				if (queue_family.queueFlags & (VK_QUEUE_GRAPHICS_BIT))
 				{
 					if (!graphics_queue_family)
 						graphics_queue_family = i;

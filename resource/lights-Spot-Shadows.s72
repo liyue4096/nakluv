@@ -477,6 +477,19 @@
 	"interpolation":"SLERP"
 },
 {
+	"type":"PTERRAIN",
+	"name":"terrain",
+	"length":33,
+	"depth":33,
+	"octaves":8,
+	"persistence":0.5,
+	"scale":5,
+	"heightlimit":3,
+	"blockSize":2,
+	"controlImage":{"src":"image.png"},
+	"noiseSource":{"src":"source.png"}
+},
+{
 	"type":"SCENE",
 	"name":"lights.blend",
 	"roots":["Tile-Floor.007", "Stone-Floor.007", "Tile-Floor.008", "Stone-Floor.008", "Tile-Floor.010", "Stone-Floor.010", "Sphere", "Cube", "Sphere.001", "Sphere.002", "Cube.001", "Sphere.003", "Sphere.006", "Cube.003", "Sphere.007", "Sphere.004", "Cube.002", "Sphere.005", "Sphere.008", "Cube.004", "Sphere.009", "Camera-Shadow128", "Camera-Shadow64", "Camera-Shadow32", "Camera-Shadow256", "Camera-Shadow512", "Empty"]

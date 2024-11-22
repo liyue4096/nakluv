@@ -17,6 +17,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <chrono>
+#include <cmath>
 
 #include <filesystem>
 
@@ -60,6 +61,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	objects_pipeline.create(rtg, render_pass, 0);
 	scenes_pipeline.create(rtg, render_pass, 0);
 	shadow_pipeline.create(rtg, shadow_map_render_pass, 0);
+	pterrain_pipeline.create(rtg);
 
 	// create descriptor pool:
 	create_description_pool();
@@ -136,7 +138,16 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	{ // terrain
 		if (s72_scene.terrain.name != "")
 		{
+			terrains.reserve(POOL_SIZE);
+			terrain_normals.reserve(POOL_SIZE);
+
+			setup_terrain_descriptor_pool();
 			prepare_terrain();
+			bind_terrain();
+			run_terrain_generation();
+			// setup_terrain_staging_buf();
+			make_terrain_descriptor_sets();
+			update_terrain(glm::vec3(0, 0, 0));
 		}
 	}
 
@@ -152,6 +163,41 @@ Tutorial::~Tutorial()
 	{
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	if (terrain_descriptor_pool)
+	{
+		vkDestroyDescriptorPool(rtg.device, terrain_descriptor_pool, nullptr);
+		terrain_descriptor_pool = nullptr;
+
+		// this also frees the descriptor sets allocated from the pool:
+		terrain_descriptors.clear();
+	}
+
+	if (terrain_view)
+	{
+		vkDestroyImageView(rtg.device, terrain_view, nullptr);
+		terrain_view = VK_NULL_HANDLE;
+	}
+	if (terrain_normal_view)
+	{
+		vkDestroyImageView(rtg.device, terrain_normal_view, nullptr);
+		terrain_normal_view = VK_NULL_HANDLE;
+	}
+	if (terrain_sampler)
+	{
+		vkDestroySampler(rtg.device, terrain_sampler, nullptr);
+		terrain_sampler = VK_NULL_HANDLE;
+	}
+	if (terrain_image.handle != VK_NULL_HANDLE)
+	{
+		rtg.helpers.destroy_image(std::move(terrain_image));
+	}
+	if (terrain_normal.handle != VK_NULL_HANDLE)
+	{
+		rtg.helpers.destroy_image(std::move(terrain_normal));
+	}
+
+	rtg.helpers.destroy_buffer(std::move(Terrain_buffer_src));
 
 	if (shadow_map_framebuffer != VK_NULL_HANDLE)
 	{
@@ -202,6 +248,36 @@ Tutorial::~Tutorial()
 		rtg.helpers.destroy_image(std::move(texture));
 	}
 	textures.clear();
+
+	vkDestroyFence(rtg.device, fence, nullptr);
+
+	for (VkImageView &view : terrain_normal_views)
+	{
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	terrain_normal_views.clear();
+
+	for (auto &texture : terrain_normals)
+	{
+		rtg.helpers.destroy_image(std::move(texture));
+	}
+	terrain_normals.clear();
+
+	for (VkImageView &view : terrain_views)
+	{
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	terrain_views.clear();
+
+	for (auto &texture : terrains)
+	{
+		rtg.helpers.destroy_image(std::move(texture));
+	}
+	terrains.clear();
+
+	vkFreeCommandBuffers(rtg.device, command_pool, 1, &terrain_cmd_buf);
 
 	if (Scene_env_sampler)
 	{
@@ -278,6 +354,7 @@ Tutorial::~Tutorial()
 	objects_pipeline.destroy(rtg);
 	scenes_pipeline.destroy(rtg);
 	shadow_pipeline.destroy(rtg);
+	pterrain_pipeline.destroy(rtg);
 
 	for (Workspace &workspace : workspaces)
 	{
@@ -856,6 +933,106 @@ void Tutorial::transitionImageLayout(VkCommandBuffer commandBuffer, VkImage imag
 		1, &barrier);
 }
 
+void Tutorial::terrain_transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; // Use COLOR aspect for color images
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	// Define pipeline stages for the transition
+	VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		sourceStage, destinationStage,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier);
+}
+
+void Tutorial::setImageLayout(
+	VkCommandBuffer commandBuffer,
+	VkImage image,
+	VkImageLayout oldLayout,
+	VkImageLayout newLayout,
+	VkPipelineStageFlags sourceStage,
+	VkPipelineStageFlags destinationStage)
+{
+	VkImageMemoryBarrier barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	// Set up access masks based on the old and new layouts
+	switch (oldLayout)
+	{
+	case VK_IMAGE_LAYOUT_UNDEFINED:
+		barrier.srcAccessMask = 0;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		break;
+	// Add cases for other old layouts if needed
+	default:
+		barrier.srcAccessMask = 0;
+		break;
+	}
+
+	switch (newLayout)
+	{
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		break;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+		break;
+	// Add cases for other new layouts if needed
+	default:
+		barrier.dstAccessMask = 0;
+		break;
+	}
+
+	// Apply the pipeline barrier
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		sourceStage, destinationStage,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier);
+}
+
 void Tutorial::shadow_render(RTG::RenderParams const &render_params)
 {
 	Workspace &workspace = workspaces[render_params.workspace_index];
@@ -1265,6 +1442,11 @@ void Tutorial::update(float dt)
 					CLIP_FROM_WORLD_SCENE = s72_scene.current_camera_new_->apply_scene_mode_camera(*s72_scene.current_camera_new_);
 
 					glm::vec3 eye_world_position = glm::vec3(camera_node_->make_local_to_world() * glm::vec4(0.f, 0.f, 0.f, 1.0f));
+
+					if (s72_scene.terrain.name != "")
+					{
+						update_terrain(eye_world_position);
+					}
 
 					// update eye position
 					world.EYE.x = eye_world_position.x;
@@ -2281,15 +2463,57 @@ void Tutorial::create_shadow_framebuffer()
 
 void Tutorial::prepare_terrain()
 {
+	// allocate cmd buffer
+	VkCommandBufferAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocInfo.commandPool = command_pool;
+	allocInfo.commandBufferCount = 1;
+
+	vkAllocateCommandBuffers(rtg.device, &allocInfo, &terrain_cmd_buf);
+
+	// define a fence
+	VkFenceCreateInfo fenceInfo{};
+	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	vkCreateFence(rtg.device, &fenceInfo, nullptr, &fence);
+
 	uint32_t length = (uint32_t)s72_scene.terrain.length;
+	uint32_t depth = (uint32_t)s72_scene.terrain.depth;
 
 	terrain_image = rtg.helpers.create_image(
-		VkExtent3D{.width = length, .height = length, .depth = length}, // size of image
-		VK_FORMAT_R8_UNORM,												// how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VkExtent3D{.width = length, .height = length, .depth = depth}, // size of image
+		VK_FORMAT_R8_UNORM,											   // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
 		VK_IMAGE_TILING_OPTIMAL,
-		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,						  // should be device-local
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,															// should be host visible and device-local
 		Helpers::Unmapped);
+
+	terrain_normal = rtg.helpers.create_image(
+		VkExtent3D{.width = length, .height = length, .depth = depth}, // size of image
+		VK_FORMAT_B10G11R11_UFLOAT_PACK32,							   // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // will sample and upload
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,															// should be host visible and device-local
+		Helpers::Unmapped);
+
+	for (int i = 0; i < POOL_SIZE; i++)
+	{
+		terrains.emplace_back(rtg.helpers.create_image(
+			VkExtent3D{.width = length, .height = length, .depth = depth}, // size of image
+			VK_FORMAT_R8_UNORM,											   // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // will sample and upload
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,															// should be device-local
+			Helpers::Unmapped));
+
+		terrain_normals.emplace_back(rtg.helpers.create_image(
+			VkExtent3D{.width = length, .height = length, .depth = depth}, // size of image
+			VK_FORMAT_R8_UNORM,											   // how to interpret image data (in this case, SRGB-encoded 8-bit RGBA)
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // will sample and upload
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,															// should be device-local
+			Helpers::Unmapped));
+	}
 
 	VkSamplerCreateInfo sampler = {};
 	sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2322,6 +2546,437 @@ void Tutorial::prepare_terrain()
 	view.subresourceRange.levelCount = 1;
 
 	VK(vkCreateImageView(rtg.device, &view, nullptr, &terrain_view));
+
+	// Create image view
+	VkImageViewCreateInfo normal_view = {};
+	normal_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	normal_view.image = terrain_normal.handle;
+	normal_view.viewType = VK_IMAGE_VIEW_TYPE_3D;
+	normal_view.format = terrain_normal.format;
+	normal_view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	normal_view.subresourceRange.baseMipLevel = 0;
+	normal_view.subresourceRange.baseArrayLayer = 0;
+	normal_view.subresourceRange.layerCount = 1;
+	normal_view.subresourceRange.levelCount = 1;
+
+	VK(vkCreateImageView(rtg.device, &normal_view, nullptr, &terrain_normal_view));
+
+	{ // make image views for the terrains
+		terrain_views.reserve(terrains.size());
+		for (Helpers::AllocatedImage const &image : terrains)
+		{
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_3D,
+				.format = image.format,
+				// .components sets swizzling and is fine when zero-initialized
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			};
+
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK(vkCreateImageView(rtg.device, &create_info, nullptr, &image_view));
+
+			terrain_views.emplace_back(image_view);
+		}
+		assert(terrain_views.size() == terrains.size());
+	}
+
+	{ // make image views for the terrain_normals
+		terrain_normal_views.reserve(terrain_normals.size());
+		for (Helpers::AllocatedImage const &image : terrain_normals)
+		{
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_3D,
+				.format = image.format,
+				// .components sets swizzling and is fine when zero-initialized
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			};
+
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK(vkCreateImageView(rtg.device, &create_info, nullptr, &image_view));
+
+			terrain_normal_views.emplace_back(image_view);
+		}
+		assert(terrain_normal_views.size() == terrain_normals.size());
+	}
+	// terrain_descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	// terrain_descriptor.imageView = terrain_view;
+	// terrain_descriptor.sampler = terrain_sampler;
+}
+
+void Tutorial::setup_terrain_descriptor()
+{
+}
+
+void Tutorial::bind_terrain()
+{
+	VkDescriptorSetAllocateInfo alloc_info{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = texture_descriptor_pool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &pterrain_pipeline.descriptor_set_layout,
+	};
+
+	VkDescriptorSet terrainDescriptorSet;
+	VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &terrainDescriptorSet));
+
+	// Descriptor for terrain image
+	VkDescriptorImageInfo terrainInfo{};
+	terrainInfo.imageView = terrain_view;
+	terrainInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	// Descriptor for normal image
+	VkDescriptorImageInfo normalInfo{};
+	normalInfo.imageView = terrain_normal_view;
+	normalInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	// Write descriptors
+	std::vector<VkWriteDescriptorSet> writes(2);
+
+	// Terrain image
+	writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	writes[0].dstSet = terrainDescriptorSet;
+	writes[0].dstBinding = 0;
+	writes[0].dstArrayElement = 0;
+	writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	writes[0].descriptorCount = 1;
+	writes[0].pImageInfo = &terrainInfo;
+
+	// Normal image
+	writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	writes[1].dstSet = terrainDescriptorSet;
+	writes[1].dstBinding = 1;
+	writes[1].dstArrayElement = 0;
+	writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+	writes[1].descriptorCount = 1;
+	writes[1].pImageInfo = &normalInfo;
+
+	vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+
+	Terrain_descriptor = terrainDescriptorSet; // Store for later binding
+}
+
+void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
+{
+	for (auto block : blocks)
+	{
+		int index = (int)BlockCoordHash{}(block);
+		// printf("target index: %d\n", index);
+
+		// Descriptor for terrain image
+		VkDescriptorImageInfo terrainInfo{};
+		terrainInfo.imageView = terrain_views[index];
+		terrainInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+		// Descriptor for normal image
+		VkDescriptorImageInfo normalInfo{};
+		normalInfo.imageView = terrain_normal_views[index];
+		normalInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+		// Write descriptors
+		std::vector<VkWriteDescriptorSet> writes(2);
+
+		// Terrain image
+		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[0].dstSet = terrain_descriptors[index];
+		writes[0].dstBinding = 0;
+		writes[0].dstArrayElement = 0;
+		writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		writes[0].descriptorCount = 1;
+		writes[0].pImageInfo = &terrainInfo;
+
+		// Normal image
+		writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[1].dstSet = terrain_descriptors[index];
+		writes[1].dstBinding = 1;
+		writes[1].dstArrayElement = 0;
+		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		writes[1].descriptorCount = 1;
+		writes[1].pImageInfo = &normalInfo;
+
+		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+
+		s72_scene.block_terrain_map[block] = index;
+	}
+}
+
+void Tutorial::run_terrain_generation()
+{
+	std::cout << "Generating " << s72_scene.terrain.length << " x " << s72_scene.terrain.length << " x " << s72_scene.terrain.depth << " noise texture...";
+	auto tStart = std::chrono::high_resolution_clock::now();
+
+	vkResetCommandBuffer(terrain_cmd_buf, 0);
+
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // Mark the buffer for single-use
+
+	vkBeginCommandBuffer(terrain_cmd_buf, &beginInfo);
+
+	terrain_transitionImageLayout(terrain_cmd_buf, terrain_image.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+	terrain_transitionImageLayout(terrain_cmd_buf, terrain_normal.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	// bind cmd pipeline
+	vkCmdBindPipeline(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.handle);
+	vkCmdBindDescriptorSets(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.layout, 0, 1, &Terrain_descriptor, 0, nullptr);
+
+	// push constant
+	PTerrainPipeline::Push push{
+		.octaves = s72_scene.terrain.octaves,
+		.persistence = s72_scene.terrain.persistence,
+		.scale = s72_scene.terrain.scale,
+		.world_corrodinate = glm::vec3(-1.f, 0, 0),
+	};
+
+	vkCmdPushConstants(terrain_cmd_buf, pterrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+
+	// Dispatch with workgroups based on texture dimensions (assuming a workgroup size of 8x8x8 in shader)
+	uint32_t groupCountX = (s72_scene.terrain.length + 1) / 2;
+	uint32_t groupCountY = (s72_scene.terrain.length + 1) / 2;
+	uint32_t groupCountZ = (s72_scene.terrain.depth + 3) / 4;
+	vkCmdDispatch(terrain_cmd_buf, groupCountX, groupCountY, groupCountZ);
+
+	vkEndCommandBuffer(terrain_cmd_buf);
+
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &terrain_cmd_buf;
+
+	// Submit the command buffer to the given queue
+	vkQueueSubmit(rtg.graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueWaitIdle(rtg.graphics_queue); // Wait for completion
+
+	auto tEnd = std::chrono::high_resolution_clock::now();
+	auto tDiff = std::chrono::duration<double, std::micro>(tEnd - tStart).count();
+
+	std::cout << "Done in " << tDiff << "us" << std::endl;
+}
+
+void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
+{
+	vkResetCommandBuffer(terrain_cmd_buf, 0);
+
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // Mark the buffer for single-use
+
+	vkBeginCommandBuffer(terrain_cmd_buf, &beginInfo);
+
+	for (const auto &block : blocks)
+	{
+		uint32_t index = s72_scene.block_terrain_map[block];
+		auto [x, y, z] = block;
+
+		terrain_transitionImageLayout(terrain_cmd_buf, terrains[index].handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+		terrain_transitionImageLayout(terrain_cmd_buf, terrain_normals[index].handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+		// bind cmd pipeline
+		vkCmdBindPipeline(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.handle);
+		vkCmdBindDescriptorSets(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.layout, 0, 1, &Terrain_descriptor, 0, nullptr);
+
+		// push constant
+		PTerrainPipeline::Push push{
+			.octaves = s72_scene.terrain.octaves,
+			.persistence = s72_scene.terrain.persistence,
+			.scale = s72_scene.terrain.scale,
+			.world_corrodinate = glm::vec3(x, y, z),
+		};
+
+		vkCmdPushConstants(terrain_cmd_buf, pterrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+
+		// Dispatch with workgroups based on texture dimensions (assuming a workgroup size of 8x8x8 in shader)
+		uint32_t groupCountX = (s72_scene.terrain.length + 1) / 2;
+		uint32_t groupCountY = (s72_scene.terrain.length + 1) / 2;
+		uint32_t groupCountZ = (s72_scene.terrain.depth + 3) / 4;
+		vkCmdDispatch(terrain_cmd_buf, groupCountX, groupCountY, groupCountZ);
+	}
+
+	vkEndCommandBuffer(terrain_cmd_buf);
+
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &terrain_cmd_buf;
+
+	// Submit the command buffer to the given queue
+	vkQueueSubmit(rtg.graphics_queue, 1, &submitInfo, fence);
+	// vkQueueWaitIdle(rtg.graphics_queue); // Wait for completion
+	vkWaitForFences(rtg.device, 1, &fence, VK_TRUE, 100000000); // 100ms
+	vkResetFences(rtg.device, 1, &fence);
+}
+
+void Tutorial::update_terrain(glm::vec3 pos)
+{
+	// get current camera position
+	int x = static_cast<int>(std::round(pos.x));
+	int y = static_cast<int>(std::round(pos.y));
+	int z = static_cast<int>(std::round(pos.z));
+
+	std::vector<BlockCoord> blocks;
+
+	// check 3*3*3 block for block_terrain_map
+	for (int k = -1; k < 2; k++)
+	{
+		for (int j = -1; j < 2; j++)
+		{
+			for (int i = -1; i < 2; i++)
+			{
+				if (abs(z + k) > s72_scene.terrain.height_limit)
+				{
+					continue;
+				}
+				BlockCoord block = std::tuple<int, int, int>(x + i, y + j, z + k);
+				if (s72_scene.block_terrain_map.find(block) == s72_scene.block_terrain_map.end())
+				{
+					blocks.push_back(block);
+					printf("make terrain at %d, %d, %d\n", x + i, y + j, z + k);
+
+					// std::cout << "bind_terrain update successfully!\n";
+				}
+			}
+		}
+	}
+
+	bind_terrain(blocks);
+
+	run_terrain_generation(blocks);
+}
+
+void Tutorial::setup_terrain_staging_buf()
+{
+	VkDeviceSize bufferSize = s72_scene.terrain.length * s72_scene.terrain.length * s72_scene.terrain.depth;
+
+	Terrain_buffer_src = rtg.helpers.create_buffer(
+		bufferSize,
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT,											// going to have GPU copy to this memory
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
+		Helpers::Mapped																// get a pointer to the memory
+	);
+
+	// 0. Allocate and Begin the Command Buffer
+
+	VkCommandBufferAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocInfo.commandPool = command_pool; // Use an existing command pool
+	allocInfo.commandBufferCount = 1;
+
+	VkCommandBuffer commandBuffer;
+	vkAllocateCommandBuffers(rtg.device, &allocInfo, &commandBuffer);
+
+	// Begin command buffer recording
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+	// 1. Record Commands (use `setImageLayout` to change the image layout)
+
+	// Transition the `terrain_image` layout for transfer
+	setImageLayout(
+		commandBuffer,
+		terrain_image.handle,
+		VK_IMAGE_LAYOUT_GENERAL,
+		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+	// 2. Define the copy region
+	VkBufferImageCopy region = {};
+	region.bufferOffset = 0;
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent = {(uint32_t)s72_scene.terrain.length, (uint32_t)s72_scene.terrain.length, (uint32_t)s72_scene.terrain.depth};
+
+	// Perform the copy
+	vkCmdCopyImageToBuffer(commandBuffer, terrain_image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Terrain_buffer_src.handle, 1, &region);
+
+	// 3. End and Submit the Command Buffer
+
+	vkEndCommandBuffer(commandBuffer);
+
+	// Submit the command buffer to the graphics queue
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	vkQueueSubmit(rtg.graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+	// vkQueueWaitIdle(rtg.graphics_queue); // Optionally wait for the command to finish
+
+	// 4. Clean Up the Command Buffer
+
+	vkFreeCommandBuffers(rtg.device, command_pool, 1, &commandBuffer);
+}
+
+void Tutorial::extract3DTexture(Helpers::AllocatedBuffer &buffer_src)
+{
+	// VkDeviceSize bufferSize = s72_scene.terrain.length * s72_scene.terrain.length * s72_scene.terrain.depth;
+	// assert(buffer_src.size == bufferSize);
+
+	// void *mappedData = nullptr;
+	// vkMapMemory(rtg.device, buffer_src.memory, 0, bufferSize, 0, &mappedData);
+
+	// uint8_t *textureData = static_cast<uint8_t *>(mappedData);
+
+	// // Loop through the 3D texture and extract values
+	// for (uint32_t z = 0; z < s72_scene.terrain.depth; ++z)
+	// {
+	// 	for (uint32_t y = 0; y < s72_scene.terrain.length; ++y)
+	// 	{
+	// 		for (uint32_t x = 0; x < s72_scene.terrain.length; ++x)
+	// 		{
+	// 			VkDeviceSize index = z * s72_scene.terrain.length * s72_scene.terrain.length +
+	// 								 y * s72_scene.terrain.length + x;
+
+	// 			uint8_t value = textureData[index];
+	// 		}
+	// 	}
+	// }
+
+	// // Unmap the buffer after reading
+	// vkUnmapMemory(rtg.device, buffer_src.memory);
+}
+
+void Tutorial::setup_terrain_descriptor_pool()
+{
+	std::array<VkDescriptorPoolSize, 1> pool_sizes{
+		VkDescriptorPoolSize{
+			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = 2 * 1 * POOL_SIZE, // 2 descriptors per set, one set per texture; binding 0 noise, binding 1 normal
+		},
+	};
+
+	VkDescriptorPoolCreateInfo create_info{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags = 0,				  // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
+		.maxSets = 4 * POOL_SIZE, // one set per texture **why i have adjust to 2 instead of 1**
+		.poolSizeCount = uint32_t(pool_sizes.size()),
+		.pPoolSizes = pool_sizes.data(),
+	};
+
+	VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain_descriptor_pool));
 }
 
 void Tutorial::setup_texture_descriptor_pool()
@@ -2338,14 +2993,31 @@ void Tutorial::setup_texture_descriptor_pool()
 
 	VkDescriptorPoolCreateInfo create_info{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.flags = 0,					// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
-		.maxSets = 2 * per_texture, // one set per texture **why i have adjust to 2 instead of 1**
+		.flags = 0,						// because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individual descriptors allocated from this pool
+		.maxSets = 2 * per_texture + 2, // one set per texture **why i have adjust to 2 instead of 1**
 		.poolSizeCount = uint32_t(pool_sizes.size()),
 		.pPoolSizes = pool_sizes.data(),
 	};
 
 	VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool));
 	// printf("setup_texture_descriptor_pool...done\n");
+}
+
+void Tutorial::make_terrain_descriptor_sets()
+{
+	// allocate the descriptors (using the same alloc_info):
+	VkDescriptorSetAllocateInfo alloc_info{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = terrain_descriptor_pool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &pterrain_pipeline.descriptor_set_layout,
+	};
+
+	terrain_descriptors.assign(POOL_SIZE, VK_NULL_HANDLE);
+	for (VkDescriptorSet &descriptor_set : terrain_descriptors)
+	{
+		VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set));
+	}
 }
 
 void Tutorial::make_texture_descriptor_sets()

@@ -146,7 +146,8 @@ void Helpers::destroy_buffer(AllocatedBuffer &&buffer)
 Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map)
 {
 	AllocatedImage image;
-	image.extent = extent;
+	image.extent.width = extent.width;
+	image.extent.height = extent.height;
 	image.format = format;
 
 	VkImageCreateInfo create_info{
@@ -213,7 +214,8 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent3D const &extent, VkFormat
 Helpers::AllocatedImage Helpers::create_cubemap_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map)
 {
 	AllocatedImage image;
-	image.extent = extent;
+	image.extent.width = extent.width;
+	image.extent.height = extent.height;
 	image.format = format;
 	// image.isCubemap = true;
 
@@ -251,7 +253,7 @@ void Helpers::destroy_image(AllocatedImage &&image)
 	vkDestroyImage(rtg.device, image.handle, nullptr);
 
 	image.handle = VK_NULL_HANDLE;
-	image.extent = VkExtent2D{.width = 0, .height = 0};
+	image.extent = VkExtent3D{.width = 0, .height = 0, .depth = 0};
 	image.format = VK_FORMAT_UNDEFINED;
 
 	this->free(std::move(image.allocation));

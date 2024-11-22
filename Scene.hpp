@@ -13,6 +13,7 @@
 #include <variant>
 #include <unordered_map>
 #include <map>
+#include <tuple>
 #include <optional>
 
 #include "lib/Bbox.h"
@@ -286,9 +287,38 @@ struct PTerrainObject
 {
     std::string name;
     int length;
+    int depth;
     int block_size;
+    int octaves = 6;
+    float persistence = 0.5f;
+    float scale = 5.f;
+    float height_limit = 10.f;
     std::string control_image;
     std::string noise_source;
+};
+// Define block coordinates as a 3D integer tuple
+using BlockCoord = std::tuple<int, int, int>;
+#ifndef POOL_HPP
+#define POOL_HPP
+
+inline constexpr int POOL_SIZE = 256;
+
+#endif
+
+struct BlockCoordHash
+{
+    std::size_t operator()(const std::tuple<int, int, int> &coord) const
+    {
+        auto [x, y, z] = coord;
+
+        // Mix the coordinates using prime multipliers
+        std::size_t hashValue = (std::hash<int>()(x) * 73856093) ^
+                                (std::hash<int>()(y) * 19349663) ^
+                                (std::hash<int>()(z) * 83492791);
+
+        // Map to the range [0, 127]
+        return hashValue % POOL_SIZE;
+    }
 };
 
 struct S72_scene
@@ -319,6 +349,8 @@ struct S72_scene
     Camera_new *current_camera_new_;
     Environment environment; // unique
     PTerrainObject terrain;
+    // Map block coordinates to texture indices in the pool
+    std::unordered_map<BlockCoord, int, BlockCoordHash> block_terrain_map;
 };
 
 void get_scene(const std::vector<sejp::value> &array);

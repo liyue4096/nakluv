@@ -256,6 +256,26 @@ struct Tutorial : RTG::Application
 		void destroy(RTG &);
 	} shadow_pipeline;
 
+	struct PTerrainPipeline
+	{
+		VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		struct Push
+		{
+			int octaves;
+			float persistence;
+			float scale;
+			glm::vec3 world_corrodinate;
+			int padding = 0;
+		};
+
+		void create(RTG &);
+		void destroy(RTG &);
+	} pterrain_pipeline;
+
 	struct HeadlessPipeline
 	{
 		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -386,9 +406,24 @@ struct Tutorial : RTG::Application
 	VkFramebuffer shadow_map_framebuffer = VK_NULL_HANDLE;
 
 	//--------------------- terrain
+	VkCommandBuffer terrain_cmd_buf = VK_NULL_HANDLE;
+	VkFence fence;
 	Helpers::AllocatedImage terrain_image;
+	Helpers::AllocatedImage terrain_normal;
 	VkImageView terrain_view = VK_NULL_HANDLE;
+	VkImageView terrain_normal_view = VK_NULL_HANDLE;
+
+	std::vector<Helpers::AllocatedImage> terrains;
+	std::vector<Helpers::AllocatedImage> terrain_normals;
+	std::vector<VkImageView> terrain_views;
+	std::vector<VkImageView> terrain_normal_views;
+	VkDescriptorPool terrain_descriptor_pool = VK_NULL_HANDLE;
 	VkSampler terrain_sampler = VK_NULL_HANDLE;
+
+	Helpers::AllocatedBuffer Terrain_buffer_src; // host coherent; mapped
+	// Helpers::AllocatedBuffer Terrain_buffer;	 // device-local
+	VkDescriptorSet Terrain_descriptor;
+	std::vector<VkDescriptorSet> terrain_descriptors; // Terrain
 	//---------------------
 
 	struct MaterialTexture
@@ -434,7 +469,22 @@ struct Tutorial : RTG::Application
 	void set_shadow_viewport(RTG::RenderParams const &render_params, int row, int col);
 	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
+	//----------------terrain
 	void prepare_terrain();
+	void setup_terrain_descriptor();
+	void bind_terrain();
+	void bind_terrain(std::vector<BlockCoord> &blocks);
+	void make_terrain_descriptor_sets();
+	void run_terrain_generation(std::vector<BlockCoord> &blocks);
+	void run_terrain_generation();
+	void setup_terrain_staging_buf(); // 3d texture -> cpu staging buffer
+	void terrain_transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
+	void setImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout,
+						VkImageLayout newLayout, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage);
+	void extract3DTexture(Helpers::AllocatedBuffer &buffer_src);
+	void setup_terrain_descriptor_pool();
+	void update_terrain(glm::vec3 pos);
+	//-----------------
 
 	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
 

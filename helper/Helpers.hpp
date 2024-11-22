@@ -58,7 +58,7 @@ struct Helpers
 	struct AllocatedImage
 	{
 		VkImage handle = VK_NULL_HANDLE;
-		VkExtent2D extent{.width = 0, .height = 0};
+		VkExtent3D extent{.width = 0, .height = 0, .depth = 1};
 		VkFormat format = VK_FORMAT_UNDEFINED;
 		Allocation allocation;
 

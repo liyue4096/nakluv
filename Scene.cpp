@@ -688,6 +688,26 @@ void get_scene(const std::vector<sejp::value> &array)
                 {
                     s72_scene.terrain.length = static_cast<uint32_t>(length_opt->second.as_number().value_or(0));
                 }
+                // Get "depth" field
+                if (auto depth_opt = obj.find("depth"); depth_opt != obj.end() && depth_opt->second.as_number())
+                {
+                    s72_scene.terrain.depth = static_cast<uint32_t>(depth_opt->second.as_number().value_or(0));
+                }
+                // Get "octaves" field: Scale to control noise frequency
+                if (auto octaves_opt = obj.find("octaves"); octaves_opt != obj.end() && octaves_opt->second.as_number())
+                {
+                    s72_scene.terrain.octaves = static_cast<uint32_t>(octaves_opt->second.as_number().value_or(4));
+                }
+                // Get "persistence" field
+                if (auto persistence_opt = obj.find("persistence"); persistence_opt != obj.end() && persistence_opt->second.as_number())
+                {
+                    s72_scene.terrain.persistence = static_cast<float>(persistence_opt->second.as_number().value_or(2));
+                }
+                // Get "scale" field
+                if (auto scale_opt = obj.find("scale"); scale_opt != obj.end() && scale_opt->second.as_number())
+                {
+                    s72_scene.terrain.scale = static_cast<float>(scale_opt->second.as_number().value_or(2));
+                }
                 // Get "blocksize" field
                 if (auto blocksize_opt = obj.find("count"); blocksize_opt != obj.end() && blocksize_opt->second.as_number())
                 {

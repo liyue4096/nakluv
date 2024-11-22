@@ -1,0 +1,86 @@
+#version 450
+#include "perlin.glsl"
+
+// Define the 3D texture we will write to
+layout(binding = 0, rgba8) uniform writeonly image3D noiseTexture;
+layout(binding = 1, rgba32f) uniform writeonly image3D normalTexture;
+
+
+layout(local_size_x = 2, local_size_y = 2, local_size_z = 4) in;
+
+layout(push_constant) uniform Push {
+    int octaves;
+    float persistence;
+    float scale;
+    vec3 worldOffset;     // Input position offset (x, y, z)
+} push;
+
+// Perlin noise function (simple implementation)
+float fractalNoise(vec3 pos, int octaves, float persistence) {
+    float sum = 0.0;
+    float frequency = 1.0;
+    float amplitude = 1.0;
+    float max = 0.0;
+    
+    for (int i = 0; i < octaves; i++) {
+        sum += perlinNoise(pos * frequency) * amplitude;
+        max += amplitude;
+        amplitude *= persistence;
+        frequency *= 2.0;
+    }
+    
+    // Normalize to [0,1]
+    return (sum / max + 1.0) * 0.5;
+}
+
+uint packR11G11B10UF(float r, float g, float b) {
+    uint ur = uint(clamp(r * 2047.0, 0.0, 2047.0)); // Pack R (11 bits)
+    uint ug = uint(clamp(g * 2047.0, 0.0, 2047.0)); // Pack G (11 bits)
+    uint ub = uint(clamp(b * 1023.0, 0.0, 1023.0)); // Pack B (10 bits)
+
+    return (ur << 0) | (ug << 11) | (ub << 22); // Combine into a 32-bit uint
+}
+
+
+vec3 computeNormal(vec3 pos) {
+    // Sample positions slightly offset to calculate gradients
+    float dx = fractalNoise(pos + vec3(0.01, 0.0, 0.0), push.octaves, push.persistence)
+             - fractalNoise(pos - vec3(0.01, 0.0, 0.0), push.octaves, push.persistence);
+    float dy = fractalNoise(pos + vec3(0.0, 0.01, 0.0), push.octaves, push.persistence)
+             - fractalNoise(pos - vec3(0.0, 0.01, 0.0), push.octaves, push.persistence);
+    float dz = fractalNoise(pos + vec3(0.0, 0.0, 0.01), push.octaves, push.persistence)
+             - fractalNoise(pos - vec3(0.0, 0.0, 0.01), push.octaves, push.persistence);
+
+    return normalize(vec3(dx, dy, dz));
+}
+
+void main() {
+    ivec3 texCoord = ivec3(gl_GlobalInvocationID.xyz);
+    vec3 normalizedPos = vec3(texCoord) / vec3(imageSize(noiseTexture));
+    // Scale and shift to match the input position offset
+    vec3 worldPos = normalizedPos * push.scale + push.worldOffset;
+    
+    // Scale to control noise frequency
+    int octaves = push.octaves;         // Number of noise layers
+    float persistence = push.persistence; // Controls amplitude scaling between layers
+    float noiseScale = push.scale;
+    
+    // Compute terrain density value
+    float noiseValue = fractalNoise(worldPos, octaves, persistence);
+
+    // Compute normal vector
+    vec3 normal = computeNormal(worldPos);
+    uint packedNormal = packR11G11B10UF(normal.r, normal.g, normal.b);
+
+    // int maxZ = imageSize(noiseTexture).z - 1;
+    // float normalizedZ = float(gl_GlobalInvocationID.z) / float(maxZ);
+    // noiseValue = (2.0 * normalizedZ) - 1.0;
+
+    // Convert to 8-bit grayscale and write to texture
+    vec4 color = vec4(vec3(noiseValue), 1.0);
+    
+    imageStore(noiseTexture, texCoord, color);
+
+    // Write normal to normalTexture (packed format)
+    imageStore(normalTexture, texCoord, uvec4(packedNormal, 0, 0, 0)); // Pack as float RGB
+}
