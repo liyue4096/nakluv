@@ -32,6 +32,7 @@ const main_objs = [
 	//maek.CPP('controllers/PlayMode.cpp'),
 	maek.CPP('Tutorial.cpp'),
 	maek.CPP('lib/PosColVertex.cpp'),
+	maek.CPP('lib/PosNorVertex.cpp'),
 	maek.CPP('lib/PosNorTexVertex.cpp'),
 	maek.CPP('lib/SceneVertex.cpp'),
 	maek.CPP('lib/Plane.cpp'),
@@ -89,6 +90,11 @@ const compute_terrain = [
 	maek.GLSLC('./shaders/pterrain.comp'),
 ];
 main_objs.push( maek.CPP('pipelines/PTerrainPipeline.cpp', undefined, { depends:[...compute_terrain] } ) );
+
+const compute_triangle = [
+	maek.GLSLC('./shaders/pterrain_triangle.comp'),
+];
+main_objs.push( maek.CPP('pipelines/PTerrainTrianglePipeline.cpp', undefined, { depends:[...compute_triangle] } ) );
 
 //to build headless shaders and pipeline:
 const headless_shaders = [

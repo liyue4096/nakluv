@@ -2,58 +2,21 @@
 #include "../helper/Helpers.hpp"
 #include "../helper/VK.hpp"
 
-static uint32_t noise_code[] =
-#include "../spv/shaders/pterrain.comp.inl"
+static uint32_t triangle_code[] =
+#include "../spv/shaders/pterrain_triangle.comp.inl"
     ;
 
 // static uint32_t frag_code[] =
 // #include "../spv/shaders/shadow.frag.inl"
 //     ;
 
-void Tutorial::PTerrainPipeline::create(RTG &rtg)
+void Tutorial::PTerrainTrianglePipeline::create(RTG &rtg)
 {
-    VkShaderModule compute_shader_module = rtg.helpers.create_shader_module(noise_code);
+    VkShaderModule compute_shader_module = rtg.helpers.create_shader_module(triangle_code);
 
     {
-        // std::array<VkDescriptorSetLayoutBinding, 4> bindings{
-        //     VkDescriptorSetLayoutBinding{
-        //         .binding = 0,
-        //         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        //         .descriptorCount = 1,
-        //         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-        //         .pImmutableSamplers = nullptr,
-        //     },
-        //     VkDescriptorSetLayoutBinding{
-        //         .binding = 1,
-        //         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        //         .descriptorCount = 1,
-        //         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-        //         .pImmutableSamplers = nullptr,
-        //     },
-        //     VkDescriptorSetLayoutBinding{
-        //         .binding = 2,
-        //         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //         .descriptorCount = 1,
-        //         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-        //         .pImmutableSamplers = nullptr,
-        //     },
-        //     VkDescriptorSetLayoutBinding{
-        //         .binding = 3,
-        //         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //         .descriptorCount = 1,
-        //         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-        //         .pImmutableSamplers = nullptr,
-        //     },
-        // };
-
-        // VkDescriptorSetLayoutCreateInfo create_info{
-        //     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        //     .bindingCount = uint32_t(bindings.size()),
-        //     .pBindings = bindings.data(),
-        // };
-
-        // VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &shared_descriptor_set_layout));
-        descriptor_set_layout = shared_descriptor_set_layout;
+        // VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &descriptor_set_layout));
+        descriptor_set_layout = shared_descriptor_set_layout; // use shared layout
     }
 
     {
@@ -65,7 +28,7 @@ void Tutorial::PTerrainPipeline::create(RTG &rtg)
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
             .offset = 0,
-            .size = sizeof(Push),
+            .size = sizeof(PTerrainPipeline::Push),
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -104,7 +67,7 @@ void Tutorial::PTerrainPipeline::create(RTG &rtg)
     vkDestroyShaderModule(rtg.device, compute_shader_module, nullptr);
 }
 
-void Tutorial::PTerrainPipeline::destroy(RTG &rtg)
+void Tutorial::PTerrainTrianglePipeline::destroy(RTG &rtg)
 {
     // if (descriptor_set_layout != VK_NULL_HANDLE)
     // {

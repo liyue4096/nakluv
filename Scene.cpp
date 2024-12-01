@@ -687,6 +687,7 @@ void get_scene(const std::vector<sejp::value> &array)
                 if (auto length_opt = obj.find("length"); length_opt != obj.end() && length_opt->second.as_number())
                 {
                     s72_scene.terrain.length = static_cast<uint32_t>(length_opt->second.as_number().value_or(0));
+                    // printf("s72_scene.terrain.length %d\n", s72_scene.terrain.length);
                 }
                 // Get "depth" field
                 if (auto depth_opt = obj.find("depth"); depth_opt != obj.end() && depth_opt->second.as_number())
@@ -720,6 +721,11 @@ void get_scene(const std::vector<sejp::value> &array)
                 if (auto noise_source_opt = obj.find("noiseSource"); noise_source_opt != obj.end() && noise_source_opt->second.as_string())
                 {
                     s72_scene.terrain.name = noise_source_opt->second.as_string().value();
+                }
+                // Get "material" field (optional)
+                if (auto material_opt = obj.find("material"); material_opt != obj.end() && material_opt->second.as_string())
+                {
+                    s72_scene.terrain.material_name = material_opt->second.as_string().value();
                 }
             }
         }
@@ -970,6 +976,16 @@ void scene_workflow(sejp::value &val)
 
     // debug msg
     // print_s72();
+
+    // terrain part
+    for (auto &material : s72_scene.materials)
+    {
+        if (material.name == s72_scene.terrain.material_name)
+        {
+            s72_scene.terrain.material_ = &material;
+            break;
+        }
+    }
 }
 
 void make_user_camera()

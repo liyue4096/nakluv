@@ -7,6 +7,13 @@
 	}
 },
 {
+	"type":"MATERIAL",
+	"name":"lambertian:terrain",
+	"lambertian":{
+		"albedo":{ "src":"terrain.png", "format":"srgb" }
+	}
+},
+{
 	"type":"MESH",
 	"name":"Tile-Floor-Small",
 	"topology":"TRIANGLE_LIST",
@@ -479,15 +486,16 @@
 {
 	"type":"PTERRAIN",
 	"name":"terrain",
-	"length":33,
-	"depth":33,
-	"octaves":8,
-	"persistence":0.5,
+	"length":32,
+	"depth":32,
+	"octaves":2,
+	"persistence":2,
 	"scale":5,
 	"heightlimit":3,
 	"blockSize":2,
 	"controlImage":{"src":"image.png"},
-	"noiseSource":{"src":"source.png"}
+	"noiseSource":{"src":"source.png"},
+	"material":"pbr:checker"
 },
 {
 	"type":"SCENE",

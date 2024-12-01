@@ -1,0 +1,213 @@
+#version 450
+#include "perlin.glsl"
+
+shared uint n;
+
+// Input images
+layout(binding = 0, rgba8) uniform readonly image3D terrainImage; // Density map
+layout(binding = 1, rgba32f) uniform readonly image3D normalMap;    // Normal map
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+struct Vertex {
+    vec3 pos;
+    vec3 normal;
+    vec2 texCoord;
+};
+// Output buffer with position and normal
+layout(binding = 2, std430) buffer VertexBuffer {
+    Vertex vertices[];
+};
+
+// Atomic counter to manage vertex allocation
+layout(binding = 3, std430) buffer CounterBuffer {
+    uint vertexCount;
+};
+
+// Atomic counter to manage vertex allocation
+layout(binding = 4, std430) buffer IndexBuffer {
+    uint index;
+};
+
+layout(binding = 5, std430) buffer CounterTri {
+    uint caseCounter[];
+};
+
+const vec3 cornerPositions[8] = vec3[](
+    vec3(0, 0, 0), // v0
+    vec3(0, 1, 0), // v1
+    vec3(1, 1, 0), // v2
+    vec3(1, 0, 0), // v3
+    vec3(0, 0, 1), // v4
+    vec3(0, 1, 1), // v5
+    vec3(1, 1, 1), // v6
+    vec3(1, 0, 1)  // v7
+);
+
+const ivec2 edgeVertices[12] = ivec2[](
+    ivec2(0, 1), // Edge 0: v0 -> v1
+    ivec2(1, 2), // Edge 1: v1 -> v2
+    ivec2(2, 3), // Edge 2: v2 -> v3
+    ivec2(3, 0), // Edge 3: v3 -> v0
+    ivec2(4, 5), // Edge 4: v4 -> v5
+    ivec2(5, 6), // Edge 5: v5 -> v6
+    ivec2(6, 7), // Edge 6: v6 -> v7
+    ivec2(7, 4), // Edge 7: v7 -> v4
+    ivec2(0, 4), // Edge 8: v0 -> v4
+    ivec2(1, 5), // Edge 9: v1 -> v5
+    ivec2(2, 6), // Edge 10: v2 -> v6
+    ivec2(3, 7)  // Edge 11: v3 -> v7
+);
+
+vec3 interpolateVertex(ivec3 coord, float densities[8], int edge) {
+    ivec2 vertices = edgeVertices[edge];
+    vec3 p1 = cornerPositions[vertices.x] + coord;
+    vec3 p2 = cornerPositions[vertices.y] + coord;
+
+    float v1 = densities[vertices.x];
+    float v2 = densities[vertices.y];
+    if (abs(v2 - v1) < 1e-6) {
+        return p1;
+    }
+
+    float t = (0.5 - v1) / (v2 - v1); // Interpolation factor
+    return mix(p1, p2, t);
+}
+
+vec3 interpolateNormal(vec3 normals[8], int edge) {
+    ivec2 vertices = edgeVertices[edge];
+    return normalize(mix(normals[vertices.x], normals[vertices.y], 0.5));
+}
+
+// Function to calculate the case index from densities
+int calculateCaseIndex(float densities[8]) {
+    int caseIndex = 0;
+    if (densities[0] > 0.5) caseIndex |= 1;
+    if (densities[1] > 0.5) caseIndex |= 2;
+    if (densities[2] > 0.5) caseIndex |= 4;
+    if (densities[3] > 0.5) caseIndex |= 8;
+    if (densities[4] > 0.5) caseIndex |= 16;
+    if (densities[5] > 0.5) caseIndex |= 32;
+    if (densities[6] > 0.5) caseIndex |= 64;
+    if (densities[7] > 0.5) caseIndex |= 128;
+
+    if(caseIndex > 0 && caseIndex < 255){
+        // debug
+        uint n = atomicAdd(index, 1);
+        caseCounter[n] = caseIndex;
+    }
+    return caseIndex;
+}
+
+vec2 generateCylindricalUV(vec3 worldPos, float zMin, float zMax) {
+    vec3 normalized = normalize(worldPos);
+
+    // Map z to the range [0, 1] based on zMin and zMax
+    float zFactor = clamp((worldPos.z - zMin) / (zMax - zMin), 0.0, 1.0);
+
+    // Invert zFactor so that small z -> u close to 1, large z -> u close to 0
+    float u = 1.0 - zFactor;
+
+    // Keep the v coordinate as height (Y axis)
+    float v = normalized.y * 0.5 + 0.5;
+
+    return vec2(u, v);
+}
+
+// Simple hash function to generate pseudo-random values
+float hash(vec3 position) {
+    return fract(sin(dot(position, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+}
+
+// Generate a small random perturbation
+vec2 randomPerturbation(vec3 position, float scale) {
+    float randX = hash(position);          // Generate random value for X
+    float randY = hash(position + 1.0);   // Offset for Y to avoid correlation
+    return vec2(randX, randY) * scale - (scale * 0.5); // Scale and center around 0
+}
+
+void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 normals[8]) {
+    // Lookup the triangle configuration based on caseIndex
+    int[15] triangleIndices = TRI_TABLE[caseIndex];
+    float zMin, zMax;
+    zMin = 0, zMax = 10;
+
+    for (int i = 0; i < 15; i += 3) {
+        // Stop when no more triangles
+        if (triangleIndices[i] == -1) break;
+
+        // Interpolate positions and normals
+        vec3 v0 = interpolateVertex(voxelCoord, densities, triangleIndices[i]);
+        vec3 n0 = interpolateNormal(normals, triangleIndices[i]);
+
+        vec3 v1 = interpolateVertex(voxelCoord, densities, triangleIndices[i + 1]);
+        vec3 n1 = interpolateNormal(normals, triangleIndices[i + 1]);
+
+        vec3 v2 = interpolateVertex(voxelCoord, densities, triangleIndices[i + 2]);
+        vec3 n2 = interpolateNormal(normals, triangleIndices[i + 2]);
+
+        // Compute base UV for the triangle (e.g., from the centroid)
+        vec3 centroid_cor = (v0 + v1 + v2) / 3.0;
+        vec2 baseUV = generateCylindricalUV(centroid_cor, zMin, zMax);
+        float perturbScale = 1/32;
+        // Add small variance to the UVs for each vertex
+        vec2 uv0 = baseUV + randomPerturbation(v0, perturbScale); // Small offset for v0
+        vec2 uv1 = baseUV + randomPerturbation(v1, perturbScale); // Small offset for v1
+        vec2 uv2 = baseUV + randomPerturbation(v2, perturbScale); // Small offset for v2
+
+        // Atomically allocate space for 3 vertices
+        uint baseIndex = atomicAdd(vertexCount, 3);
+
+        // Write positions and normals to the buffer
+        vertices[baseIndex + 0].pos = v0/16;
+        vertices[baseIndex + 0].normal = n0;
+        vertices[baseIndex + 0].texCoord = uv0;
+
+        vertices[baseIndex + 1].pos = v1/16;
+        vertices[baseIndex + 1].normal = n1;
+        vertices[baseIndex + 1].texCoord = uv1;
+
+        vertices[baseIndex + 2].pos = v2/16;
+        vertices[baseIndex + 2].normal = n2;
+        vertices[baseIndex + 2].texCoord = uv2;
+    }
+}
+
+// Emit triangles based on voxel density and normals
+void main() {
+
+    ivec3 voxelCoord = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 imageSize = imageSize(terrainImage);
+
+    if (any(greaterThanEqual(voxelCoord, imageSize))) {
+        return; // Skip out-of-bounds invocations
+    }
+
+    // Sample densities at voxel corners
+    float densities[8];
+    densities[0] = imageLoad(terrainImage, voxelCoord).r;
+    densities[1] = imageLoad(terrainImage, voxelCoord + ivec3(0, 1, 0)).r;
+    densities[2] = imageLoad(terrainImage, voxelCoord + ivec3(1, 1, 0)).r;
+    densities[3] = imageLoad(terrainImage, voxelCoord + ivec3(1, 0, 0)).r;
+    densities[4] = imageLoad(terrainImage, voxelCoord + ivec3(0, 0, 1)).r;
+    densities[5] = imageLoad(terrainImage, voxelCoord + ivec3(0, 1, 1)).r;
+    densities[6] = imageLoad(terrainImage, voxelCoord + ivec3(1, 1, 1)).r;
+    densities[7] = imageLoad(terrainImage, voxelCoord + ivec3(1, 0, 1)).r;
+
+    // Compute case index
+    int caseIndex = calculateCaseIndex(densities);
+
+    // Fetch normals from the normal map
+    vec3 normals[8];
+    normals[0] = imageLoad(normalMap, voxelCoord).rgb;
+    normals[1] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 0)).rgb;
+    normals[2] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 0)).rgb;
+    normals[3] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 0)).rgb;
+    normals[4] = imageLoad(normalMap, voxelCoord + ivec3(0, 0, 1)).rgb;
+    normals[5] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 1)).rgb;
+    normals[6] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 1)).rgb;
+    normals[7] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 1)).rgb;
+
+    // Generate triangles
+    emitTriangles(caseIndex, voxelCoord, densities, normals);
+}

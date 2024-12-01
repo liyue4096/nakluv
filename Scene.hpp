@@ -295,6 +295,8 @@ struct PTerrainObject
     float height_limit = 10.f;
     std::string control_image;
     std::string noise_source;
+    std::string material_name;
+    MaterialObject *material_;
 };
 // Define block coordinates as a 3D integer tuple
 using BlockCoord = std::tuple<int, int, int>;

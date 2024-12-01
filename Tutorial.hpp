@@ -1,5 +1,6 @@
 #pragma once
 #include "lib/PosColVertex.hpp"
+#include "lib/PosNorVertex.hpp"
 #include "lib/PosNorTexVertex.hpp"
 #include "lib/SceneVertex.hpp"
 #include "lib/Mat4.hpp"
@@ -117,7 +118,13 @@ struct Tutorial : RTG::Application
 		};
 		static_assert(sizeof(Transform) == 16 * 4 + 16 * 4 + 16 * 4, "Transform is the expected size.");
 
-		// no push constants
+		// push constants
+		struct Push
+		{
+			glm::mat4 CLIP_FROM_LOCAL;
+			glm::mat4 WORLD_FROM_LOCAL;
+			glm::mat4 WORLD_FROM_LOCAL_NORMAL;
+		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -276,6 +283,19 @@ struct Tutorial : RTG::Application
 		void destroy(RTG &);
 	} pterrain_pipeline;
 
+	struct PTerrainTrianglePipeline
+	{
+		VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		using Vertex = PosNorTexVertex;
+
+		void create(RTG &);
+		void destroy(RTG &);
+	} pterrain_triangle_pipeline;
+
 	struct HeadlessPipeline
 	{
 		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -406,6 +426,7 @@ struct Tutorial : RTG::Application
 	VkFramebuffer shadow_map_framebuffer = VK_NULL_HANDLE;
 
 	//--------------------- terrain
+	inline static VkDescriptorSetLayout shared_descriptor_set_layout = VK_NULL_HANDLE;
 	VkCommandBuffer terrain_cmd_buf = VK_NULL_HANDLE;
 	VkFence fence;
 	Helpers::AllocatedImage terrain_image;
@@ -424,6 +445,13 @@ struct Tutorial : RTG::Application
 	// Helpers::AllocatedBuffer Terrain_buffer;	 // device-local
 	VkDescriptorSet Terrain_descriptor;
 	std::vector<VkDescriptorSet> terrain_descriptors; // Terrain
+
+	std::vector<Helpers::AllocatedBuffer> terrain_vertices;
+	std::vector<Helpers::AllocatedBuffer> terrain_vertices_counters;
+	std::vector<Helpers::AllocatedBuffer> terrain_index;
+	std::vector<Helpers::AllocatedBuffer> terrain_expected_triangles;
+	std::vector<int> terrain_vertices_count_src;
+	std::vector<VkDescriptorSet> terrain_tri_descriptors; // Terrain_triangle
 	//---------------------
 
 	struct MaterialTexture
@@ -471,6 +499,7 @@ struct Tutorial : RTG::Application
 
 	//----------------terrain
 	void prepare_terrain();
+	void create_shared_descriptor_layout();
 	void setup_terrain_descriptor();
 	void bind_terrain();
 	void bind_terrain(std::vector<BlockCoord> &blocks);
@@ -484,6 +513,9 @@ struct Tutorial : RTG::Application
 	void extract3DTexture(Helpers::AllocatedBuffer &buffer_src);
 	void setup_terrain_descriptor_pool();
 	void update_terrain(glm::vec3 pos);
+	void bind_vertices_descriptor(int index);
+
+	void render_terrain(Workspace &workspace);
 	//-----------------
 
 	std::vector<uint32_t> convertImageToE5B9G9R9(const unsigned char *image_data, int width, int height);
