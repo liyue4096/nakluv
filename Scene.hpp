@@ -14,6 +14,9 @@
 #include <unordered_map>
 #include <map>
 #include <tuple>
+#include <cmath>
+#include <queue>
+#include <functional>
 #include <optional>
 
 #include "lib/Bbox.h"
@@ -303,9 +306,65 @@ using BlockCoord = std::tuple<int, int, int>;
 #ifndef POOL_HPP
 #define POOL_HPP
 
-inline constexpr int POOL_SIZE = 256;
+inline constexpr int POOL_SIZE = 512;
+inline constexpr int QUEUE_SIZE = 128;
 
 #endif
+
+struct BlockCoordContainer
+{
+    BlockCoord reference;
+    std::vector<BlockCoord> elements;
+
+    BlockCoordContainer() : reference({0, 0, 0}) {}
+    explicit BlockCoordContainer(const BlockCoord &ref) : reference(ref) {}
+
+    static int squaredDistance(const BlockCoord &a, const BlockCoord &b)
+    {
+        int dx = std::get<0>(a) - std::get<0>(b);
+        int dy = std::get<1>(a) - std::get<1>(b);
+        int dz = std::get<2>(a) - std::get<2>(b);
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    void push(const BlockCoord &coord)
+    {
+        elements.push_back(coord);
+    }
+
+    void sortByDistance()
+    {
+        std::sort(elements.begin(), elements.end(), [this](const BlockCoord &a, const BlockCoord &b)
+                  { return squaredDistance(a, reference) < squaredDistance(b, reference); });
+    }
+
+    BlockCoord top()
+    {
+        sortByDistance();
+        return elements.front();
+    }
+
+    void pop()
+    {
+        sortByDistance();
+        elements.pop_back();
+    }
+
+    bool empty() const
+    {
+        return elements.empty();
+    }
+
+    size_t size() const
+    {
+        return elements.size();
+    }
+
+    auto find(const BlockCoord &target) const
+    {
+        return std::find(elements.begin(), elements.end(), target);
+    }
+};
 
 struct BlockCoordHash
 {
@@ -318,10 +377,54 @@ struct BlockCoordHash
                                 (std::hash<int>()(y) * 19349663) ^
                                 (std::hash<int>()(z) * 83492791);
 
-        // Map to the range [0, 127]
+        // Map to the range
         return hashValue % POOL_SIZE;
     }
 };
+
+static inline int hash(int x, int y, int z)
+{
+    return ((x * 31) ^ (y * 37) ^ (z * 41)) % POOL_SIZE;
+}
+
+static inline int hash(const BlockCoord &block)
+{
+    auto [x, y, z] = block;
+    int raw_hash = ((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)); // Calculate the raw hash
+    return (raw_hash % POOL_SIZE + POOL_SIZE) % POOL_SIZE;
+}
+
+static inline int find_final_hash(const BlockCoord &block, std::unordered_map<int, BlockCoord> &index_terrain_map)
+{
+    int hash_value = hash(block); // Initial hash value
+    while (true)
+    {
+        auto it = index_terrain_map.find(hash_value);
+        if (it == index_terrain_map.end())
+        {
+            // No collision, hash value is appropriate
+            return hash_value;
+        }
+        if (it->second == block)
+        {
+            return hash_value;
+        }
+
+        // Check the squared distance
+        const auto &[ex, ey, ez] = it->second; // Existing block at the current hash
+        const auto &[bx, by, bz] = block;
+        int squared_distance = (bx - ex) * (bx - ex) + (by - ey) * (by - ey) + (bz - ez) * (bz - ez);
+
+        if (squared_distance > 27)
+        {
+            // Distance is safe, hash value is appropriate
+            return hash_value;
+        }
+
+        // Collision and squared distance <= 27, try the next hash
+        hash_value = (hash_value + 7) % POOL_SIZE;
+    }
+}
 
 struct S72_scene
 {
@@ -353,6 +456,9 @@ struct S72_scene
     PTerrainObject terrain;
     // Map block coordinates to texture indices in the pool
     std::unordered_map<BlockCoord, int, BlockCoordHash> block_terrain_map;
+    std::unordered_map<int, BlockCoord> index_terrain_map;
+    BlockCoordContainer odd_block_container;
+    BlockCoordContainer even_block_container;
 };
 
 void get_scene(const std::vector<sejp::value> &array);

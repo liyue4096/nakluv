@@ -2,8 +2,9 @@
 #include "perlin.glsl"
 
 // Define the 3D texture we will write to
-layout(binding = 0, rgba8) uniform writeonly image3D noiseTexture;
-layout(binding = 1, rgba32f) uniform writeonly image3D normalTexture;
+layout(binding = 0, rgba8) uniform readonly image3D inputTexture;
+layout(binding = 1, rgba8) uniform writeonly image3D terrainTexture;
+layout(binding = 2, rgba32f) uniform writeonly image3D normalTexture;
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -11,7 +12,8 @@ layout(push_constant) uniform Push {
     int octaves;
     float persistence;
     float scale;
-    vec3 worldOffset;     // Input position offset (x, y, z)
+    float height_limit;
+    ivec3 worldOffset;     // Input position offset (x, y, z)
 } push;
 
 // Perlin noise function (simple implementation)
@@ -54,14 +56,126 @@ vec3 computeNormal(vec3 pos) {
 }
 
 void main() {
+    ivec3 voxelCoord = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 Size = imageSize(inputTexture); // Get the texture size
+
+    // Skip out-of-bounds threads
+    if (any(greaterThanEqual(voxelCoord, Size))) {
+        return;
+    }
+
+    ivec3 input_voxelCoord = voxelCoord;
+
+    // Check if inversion along axes is needed
+    bool invertX = int(push.worldOffset.x) % 2 == 1;
+    bool invertY = int(push.worldOffset.y) % 2 == 1;
+    bool invertZ = int(push.worldOffset.z) % 2 == 1;
+
+    // Adjust coordinates based on inversion
+    if (invertX) {
+        input_voxelCoord.x = Size.x - 1 - voxelCoord.x;
+    }
+    if (invertY) {
+        input_voxelCoord.y = Size.y - 1 - voxelCoord.y;
+    }
+    if (invertZ) {
+        input_voxelCoord.z = Size.z - 1 - voxelCoord.z;
+    }
+
+    vec3 normalizedPos = vec3(voxelCoord) / vec3(Size); // Normalize to [0, 1] range
+    vec3 worldPos = normalizedPos * push.scale + push.worldOffset;
+
+    float baseRotationAngle = 0.5236; // Example rotation angle in radians (~30 degrees)
+
+    // Multi-octave noise generation
+    float noiseScale = 0.25; // Base scale for noise
+    float amplitude = 0.5;  // Base amplitude
+    float frequency = 1.0;  // Base frequency
+    float finalNoise = imageLoad(inputTexture, input_voxelCoord).r; // Accumulated noise
+    int octaves = 3;        // Number of octaves
+    float lacunarity = 1.9; // Frequency multiplier (slightly less than 2)
+    float gain = 0.5;       // Amplitude multiplier
+
+    for (int i = 0; i < octaves; ++i) {
+        float dynamicAngle = baseRotationAngle * float(i + 1); // Vary angle by octave
+        mat3 dynamicRotationMatrix = mat3(
+            vec3(cos(dynamicAngle), -sin(dynamicAngle), 0.0),
+            vec3(sin(dynamicAngle),  cos(dynamicAngle), 0.0),
+            vec3(0.0,                0.0,                1.0)
+        );
+
+        // Apply rotation to the scaled position
+        vec3 rotatedPos = dynamicRotationMatrix * (worldPos * frequency);
+
+        // Adjust rotatedPos based on inversion
+        if (invertX) {
+            rotatedPos.x = 1.0 - rotatedPos.x; // Invert along X-axis
+        }
+        if (invertY) {
+            rotatedPos.y = 1.0 - rotatedPos.y; // Invert along Y-axis
+        }
+        if (invertZ) {
+            rotatedPos.z = 1.0 - rotatedPos.z; // Invert along Z-axis
+        }
+
+        // Convert rotatedPos to voxel coordinates for noise sampling
+        vec3 wrappedPos = mod(rotatedPos, 1.0); // Wrap within [0, 1] range
+        ivec3 rotatedVoxelCoord = ivec3(wrappedPos * vec3(Size));
+
+        // Sample noise using rotated coordinates
+        float noiseValue = imageLoad(inputTexture, rotatedVoxelCoord).r;
+
+        // Accumulate noise
+        // finalNoise += noiseValue * amplitude;
+
+        // Update frequency and amplitude for the next octave
+        frequency *= lacunarity; // Increase frequency
+        amplitude *= gain;       // Decrease amplitude
+    }
+
+    // float noiseValue = imageLoad(inputTexture, input_voxelCoord).r; // Red channel
+
+    // // Scale and offset noise for intensity control
+    // float noiseScale = 0.27; // Scale the noise effect
+    float noisySpot = finalNoise * noiseScale;
+
+    vec3 ballCenter = vec3(3, 3, 1.5);
+    float ballRadius = 2;
+    float distanceToCenter = length(worldPos - ballCenter);
+
+    // Add noise to base terrain
+    float baseValue = worldPos.z / push.height_limit;
+    float finalValue = clamp(1.0 - (distanceToCenter / ballRadius), 0.0, 1.0); //= baseValue - noisySpot;
+    finalValue = clamp (finalValue, 0, 1);
+
+    // Write final value to a texture
+    imageStore(terrainTexture, voxelCoord, vec4(finalValue, 0.0, 0.0, 1.0));
+
+    // Compute gradient to generate normals
+    float dx = imageLoad(inputTexture, voxelCoord + ivec3(1, 0, 0)).r - 
+               imageLoad(inputTexture, voxelCoord - ivec3(1, 0, 0)).r;
+    float dy = imageLoad(inputTexture, voxelCoord + ivec3(0, 1, 0)).r - 
+               imageLoad(inputTexture, voxelCoord - ivec3(0, 1, 0)).r;
+    float dz = imageLoad(inputTexture, voxelCoord + ivec3(0, 0, 1)).r - 
+               imageLoad(inputTexture, voxelCoord - ivec3(0, 0, 1)).r;
+
+    vec3 gradient = vec3(dx, dy, dz);
+    vec3 normal = normalize(gradient); // Normalize gradient to get the normal
+
+    // Store normal in normalTexture
+    vec3 packedNormal = normal * 0.5 + 0.5; // Pack to [0, 1] range for storage
+    imageStore(normalTexture, voxelCoord, vec4(packedNormal, 1.0));
+}
+
+void main_old() {
     ivec3 texCoord = ivec3(gl_GlobalInvocationID.xyz);
-    ivec3 Size = imageSize(noiseTexture); // Get the texture size
+    ivec3 Size = imageSize(terrainTexture); // Get the texture size
     // Skip out-of-bounds threads
     if (any(greaterThanEqual(texCoord, Size))) {
         return; // Exit the shader for out-of-bounds threads
     }
     
-    vec3 normalizedPos = vec3(texCoord) / vec3(imageSize(noiseTexture));
+    vec3 normalizedPos = vec3(texCoord) / vec3(imageSize(terrainTexture));
     // Scale and shift to match the input position offset
     vec3 worldPos = normalizedPos * push.scale + push.worldOffset;
     
@@ -78,7 +192,8 @@ void main() {
 
     if(noiseValue > 0.3333 && noiseValue < 0.6667){
         // Compute normal vector
-        normal = computeNormal(worldPos);
+        // normal = computeNormal(worldPos);
+        normal = vec3 (0,1,0);
         //packedNormal = packR11G11B10UF(normal.r, normal.g, normal.b);
     }
 
@@ -86,28 +201,27 @@ void main() {
     // imageStore(normalTexture, texCoord, uvec4(packedNormal, 0, 0, 0)); // Pack as float RGB
     imageStore(normalTexture, texCoord, vec4(normal, 1.0));
 
-    int maxZ = imageSize(noiseTexture).z - 1;
-    int maxX = imageSize(noiseTexture).x - 1;
-    int maxY = imageSize(noiseTexture).y - 1;
+    float base = worldPos.z / push.height_limit;
 
-    // Normalize coordinates to [0, 1]
-    float normalizedZ = float(gl_GlobalInvocationID.z) / float(maxZ);
-    float normalizedX = float(gl_GlobalInvocationID.x) / float(maxX);
-    float normalizedY = float(gl_GlobalInvocationID.y) / float(maxY);
-    float base = (2.0 * normalizedZ) - 1.0;
-
-    float frequency = 3/10.0; // Number of oscillations
-    float amplitude = 1;  // Height of the wave (from 0 to 1)
+    float frequency = 1.5; // Number of oscillations
+    float amplitude = 0.2;  // Height of the wave (from 0 to 1)
 
     // Sine wave based on x-coordinate
-    float sineWave = amplitude * sin(2.0 * 3.14159265 * frequency * (normalizedX * normalizedY));
-    
-    noiseValue = base + sineWave;
+    float sineWave = amplitude * sin(2.0 * 3.14159265 * frequency * (worldPos.x));
+
+    vec2 target = vec2(0.5, 0.5); // Target position
+    float radius = 0.2;
+    float test_noise = 0.;
+    if (distance(normalizedPos.xy, target) < radius) {
+        test_noise = 0.5 * distance(normalizedPos.xy, target);
+    }
+
+    noiseValue = sin(base) + 0.5 * noiseValue;
     noiseValue = clamp(noiseValue, 0.0, 1.0);
 
     // Convert to 8-bit grayscale and write to texture
     vec4 color = vec4(vec3(noiseValue), 1.0);
     
-    imageStore(noiseTexture, texCoord, color);
+    imageStore(terrainTexture, texCoord, color);
 
 }

@@ -63,6 +63,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	shadow_pipeline.create(rtg, shadow_map_render_pass, 0);
 
 	// terrain specific pipelines
+	pterrain_noise_pipeline.create(rtg);
 	create_shared_descriptor_layout();
 	pterrain_pipeline.create(rtg);
 	pterrain_triangle_pipeline.create(rtg);
@@ -151,12 +152,12 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 
 			setup_terrain_descriptor_pool();
 			prepare_terrain();
-			// bind_terrain();
+			bind_terrain_noise();
 			// setup_terrain_staging_buf();
 			make_terrain_descriptor_sets();
 
-			// run_terrain_generation();
-			update_terrain(glm::vec3(0, 0, 0));
+			generate_noise_texture();
+			// update_terrain(glm::vec3(0, 0, 0));
 		}
 	}
 
@@ -197,9 +198,9 @@ Tutorial::~Tutorial()
 		vkDestroySampler(rtg.device, terrain_sampler, nullptr);
 		terrain_sampler = VK_NULL_HANDLE;
 	}
-	if (terrain_image.handle != VK_NULL_HANDLE)
+	if (terrain_noise.handle != VK_NULL_HANDLE)
 	{
-		rtg.helpers.destroy_image(std::move(terrain_image));
+		rtg.helpers.destroy_image(std::move(terrain_noise));
 	}
 	if (terrain_normal.handle != VK_NULL_HANDLE)
 	{
@@ -377,6 +378,7 @@ Tutorial::~Tutorial()
 	objects_pipeline.destroy(rtg);
 	scenes_pipeline.destroy(rtg);
 	shadow_pipeline.destroy(rtg);
+	pterrain_noise_pipeline.destroy(rtg);
 	pterrain_pipeline.destroy(rtg);
 	pterrain_triangle_pipeline.destroy(rtg);
 
@@ -667,68 +669,119 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 void Tutorial::render_terrain(Workspace &workspace)
 {
-	BlockCoord test_block = std::tuple<int, int, int>(0, 0, 0);
-	auto [x, y, z] = test_block;
-	uint32_t index = s72_scene.block_terrain_map[test_block];
+	std::vector<std::pair<float, BlockCoord>> blocks_with_distances;
+
+	Frustum camera_frustum = Frustum::createFrustumFromCamera(*s72_scene.current_camera_new_);
+
+	// glm::vec3 pos = s72_scene.current_camera_new_->position;
+
+	for (const auto &[index, block] : s72_scene.index_terrain_map)
+	{
+		// printf("index_terrain_map size: %zd\n", s72_scene.index_terrain_map.size());
+		// Compute world position of the block (assuming block_coord corresponds to world position)
+		auto [x, y, z] = block;
+		glm::vec3 block_world_position = glm::vec3(x, y, z);
+
+		BBox bbox_trans;
+		bbox_trans.enclose(block_world_position);
+		bbox_trans.enclose(block_world_position + glm::vec3(1.0f));
+
+		// Perform frustum culling
+		if (!camera_frustum.isBBoxInFrustum(bbox_trans))
+		{
+			// Skip blocks outside the camera's frustum
+			continue;
+		}
+
+		// Get camera position
+		glm::vec3 camera_position = s72_scene.current_camera_new_->position;
+
+		// Calculate squared distance to the camera (avoids expensive sqrt)
+		float distance_squared = glm::dot(block_world_position - camera_position, block_world_position - camera_position);
+
+		// Store the block and its distance
+		blocks_with_distances.emplace_back(distance_squared, block);
+	}
+
+	// Sort blocks by distance (ascending for near-to-far rendering)
+	std::sort(blocks_with_distances.begin(), blocks_with_distances.end(),
+			  [](const std::pair<float, BlockCoord> &a, const std::pair<float, BlockCoord> &b)
+			  {
+				  return a.first < b.first;
+			  });
+
+	// BlockCoord test_block = std::tuple<int, int, int>(0, 0, 0);
+
 	// printf("try to render_terrain at 0,0,0 with vertices cnt: %d\n", terrain_vertices_count_src[index]);
-	std::vector<int> block_indexs;
+	// std::vector<int> block_indexs;
 
 	vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
-	{ // use object_vertices (offset 0) as vertex buffer binding 0:
-		std::array<VkBuffer, 1> vertex_buffers{terrain_vertices[index].handle};
-		std::array<VkDeviceSize, 1> offsets{0};
-		vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
-	}
+	for (const auto &[distance, block] : blocks_with_distances)
+	{
+		auto [x, y, z] = block;
+		// uint32_t index = s72_scene.block_terrain_map[block_coord];
+		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
+		uint32_t *data = (uint32_t *)terrain_vertices_counters[index].allocation.mapped;
 
-	{ // bind World and Transforms descriptor sets:
-		std::array<VkDescriptorSet, 2> descriptor_sets{
-			workspace.Scene_world_descriptors,		// 0: World
-			workspace.Scene_transforms_descriptors, // 1: Transforms	need to modify
-		};
+		if (*data == 0)
+			continue;
+
+		{ // use object_vertices (offset 0) as vertex buffer binding 0:
+			std::array<VkBuffer, 1> vertex_buffers{terrain_vertices[index].handle};
+			std::array<VkDeviceSize, 1> offsets{0};
+			vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+		}
+
+		{ // bind World and Transforms descriptor sets:
+			std::array<VkDescriptorSet, 2> descriptor_sets{
+				workspace.Scene_world_descriptors,		// 0: World
+				workspace.Scene_transforms_descriptors, // 1: Transforms	need to modify
+			};
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer,								  // command buffer
+				VK_PIPELINE_BIND_POINT_GRAPHICS,						  // pipeline bind point
+				objects_pipeline.layout,								  // pipeline layout
+				0,														  // first set
+				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+				0, nullptr												  // dynamic offsets count, ptr
+			);
+		}
+
+		// set default be the last one descriptor set, set in void Toturial::make_texture_descriptor_sets();
+		auto texture_descriptor_index = s72_scene.material_descriptor_index_map.size();
+		auto material_ = s72_scene.terrain.material_;
+
+		if (s72_scene.material_descriptor_index_map.find(material_) != s72_scene.material_descriptor_index_map.end())
+			texture_descriptor_index = s72_scene.material_descriptor_index_map[material_];
+
+		// bind texture descriptor set:
 		vkCmdBindDescriptorSets(
-			workspace.command_buffer,								  // command buffer
-			VK_PIPELINE_BIND_POINT_GRAPHICS,						  // pipeline bind point
-			objects_pipeline.layout,								  // pipeline layout
-			0,														  // first set
-			uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
-			0, nullptr												  // dynamic offsets count, ptr
+			workspace.command_buffer,						   // command buffer
+			VK_PIPELINE_BIND_POINT_GRAPHICS,				   // pipeline bind point
+			objects_pipeline.layout,						   // pipeline layout
+			2,												   // second set
+			1, &texture_descriptors[texture_descriptor_index], // descriptor sets count, ptr ; use default texture
+			0, nullptr										   // dynamic offsets count, ptr
 		);
+
+		glm::mat4 CLIP_FROM_WORLD_SCENE = s72_scene.current_camera_new_->apply_scene_mode_camera(*s72_scene.current_camera_new_);
+		auto world_from_local = glm::mat4(
+			glm::vec4(1.0f, 0, 0, 0), // scaling the columns here means that scale happens before rotation
+			glm::vec4(0, 1.0f, 0, 0),
+			glm::vec4(0, 0, 1.0f, 0),
+			glm::vec4(x, y, z, 1.0f));
+
+		ObjectsPipeline::Push push{
+			.CLIP_FROM_LOCAL = CLIP_FROM_WORLD_SCENE * world_from_local,
+			.WORLD_FROM_LOCAL = world_from_local,
+			.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.0f),
+		};
+
+		vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+
+		vkCmdDraw(workspace.command_buffer, terrain_vertices_count_src[index], 1, 0, 0);
 	}
-
-	// set default be the last one descriptor set, set in void Toturial::make_texture_descriptor_sets();
-	auto texture_descriptor_index = s72_scene.material_descriptor_index_map.size();
-	auto material_ = s72_scene.terrain.material_;
-
-	if (s72_scene.material_descriptor_index_map.find(material_) != s72_scene.material_descriptor_index_map.end())
-		texture_descriptor_index = s72_scene.material_descriptor_index_map[material_];
-
-	// bind texture descriptor set:
-	vkCmdBindDescriptorSets(
-		workspace.command_buffer,						   // command buffer
-		VK_PIPELINE_BIND_POINT_GRAPHICS,				   // pipeline bind point
-		objects_pipeline.layout,						   // pipeline layout
-		2,												   // second set
-		1, &texture_descriptors[texture_descriptor_index], // descriptor sets count, ptr ; use default texture
-		0, nullptr										   // dynamic offsets count, ptr
-	);
-
-	glm::mat4 CLIP_FROM_WORLD_SCENE = s72_scene.current_camera_new_->apply_scene_mode_camera(*s72_scene.current_camera_new_);
-	auto world_from_local = glm::mat4(
-		glm::vec4(1.0f, 0, 0, 0), // scaling the columns here means that scale happens before rotation
-		glm::vec4(0, 1.0f, 0, 0),
-		glm::vec4(0, 0, 1.0f, 0),
-		glm::vec4(x, y, z, 1.0f));
-
-	ObjectsPipeline::Push push{
-		.CLIP_FROM_LOCAL = CLIP_FROM_WORLD_SCENE * world_from_local,
-		.WORLD_FROM_LOCAL = world_from_local,
-		.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.0f),
-	};
-
-	vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
-
-	vkCmdDraw(workspace.command_buffer, terrain_vertices_count_src[index], 1, 0, 0);
 }
 
 void Tutorial::render_upload_scene_instances(RTG::RenderParams const &render_params)
@@ -2554,6 +2607,8 @@ void Tutorial::create_shadow_framebuffer()
 
 void Tutorial::prepare_terrain()
 {
+	s72_scene.index_terrain_map.clear();
+
 	// allocate cmd buffer
 	VkCommandBufferAllocateInfo allocInfo{};
 	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -2571,7 +2626,7 @@ void Tutorial::prepare_terrain()
 	uint32_t length = (uint32_t)s72_scene.terrain.length + 1;
 	uint32_t depth = (uint32_t)s72_scene.terrain.depth + 1;
 
-	terrain_image = rtg.helpers.create_image(
+	terrain_noise = rtg.helpers.create_image(
 		VkExtent3D{.width = length, .height = length, .depth = depth}, // size of image
 		VK_FORMAT_R8_UNORM,											   // how to interpret image data (in this case, linearly-encoded 8-bit RGBA)
 		VK_IMAGE_TILING_OPTIMAL,
@@ -2627,9 +2682,9 @@ void Tutorial::prepare_terrain()
 	// Create image view
 	VkImageViewCreateInfo view = {};
 	view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	view.image = terrain_image.handle;
+	view.image = terrain_noise.handle;
 	view.viewType = VK_IMAGE_VIEW_TYPE_3D;
-	view.format = terrain_image.format;
+	view.format = terrain_noise.format;
 	view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	view.subresourceRange.baseMipLevel = 0;
 	view.subresourceRange.baseArrayLayer = 0;
@@ -2744,13 +2799,14 @@ void Tutorial::prepare_terrain()
 
 void Tutorial::create_shared_descriptor_layout()
 {
-	std::array<VkDescriptorSetLayoutBinding, 6> bindings{
+	std::array<VkDescriptorSetLayoutBinding, 7> bindings{
 		VkDescriptorSetLayoutBinding{.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
 		VkDescriptorSetLayoutBinding{.binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
-		VkDescriptorSetLayoutBinding{.binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
+		VkDescriptorSetLayoutBinding{.binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
 		VkDescriptorSetLayoutBinding{.binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
 		VkDescriptorSetLayoutBinding{.binding = 4, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
 		VkDescriptorSetLayoutBinding{.binding = 5, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
+		VkDescriptorSetLayoutBinding{.binding = 6, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = nullptr},
 	};
 
 	VkDescriptorSetLayoutCreateInfo create_info{
@@ -2837,13 +2893,13 @@ void Tutorial::setup_terrain_descriptor()
 {
 }
 
-void Tutorial::bind_terrain()
+void Tutorial::bind_terrain_noise()
 {
 	VkDescriptorSetAllocateInfo alloc_info{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = texture_descriptor_pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts = &pterrain_pipeline.descriptor_set_layout,
+		.pSetLayouts = &pterrain_noise_pipeline.descriptor_set_layout,
 	};
 
 	VkDescriptorSet terrainDescriptorSet;
@@ -2882,15 +2938,20 @@ void Tutorial::bind_terrain()
 
 	vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 
-	Terrain_descriptor = terrainDescriptorSet; // Store for later binding
+	Terrain_noise_descriptor = terrainDescriptorSet; // Store for later binding
 }
 
 void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 {
 	for (auto block : blocks)
 	{
-		int index = (int)BlockCoordHash{}(block);
+		// int index = (int)BlockCoordHash{}(block);
+		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
 		// printf("target index: %d\n", index);
+		// Descriptor for terrain noise image
+		VkDescriptorImageInfo noiseInfo{};
+		noiseInfo.imageView = terrain_view;
+		noiseInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
 		// Descriptor for terrain image
 		VkDescriptorImageInfo terrainInfo{};
@@ -2927,7 +2988,7 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 		counterBufferInfo_tri.range = 1024 * sizeof(uint32_t);
 
 		// Write descriptors
-		std::vector<VkWriteDescriptorSet> writes(6);
+		std::vector<VkWriteDescriptorSet> writes(7);
 
 		// Terrain image
 		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2936,25 +2997,25 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 		writes[0].dstArrayElement = 0;
 		writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		writes[0].descriptorCount = 1;
-		writes[0].pImageInfo = &terrainInfo;
+		writes[0].pImageInfo = &noiseInfo;
 
-		// Normal image
+		// Terrain image
 		writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[1].dstSet = terrain_descriptors[index];
 		writes[1].dstBinding = 1;
 		writes[1].dstArrayElement = 0;
 		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		writes[1].descriptorCount = 1;
-		writes[1].pImageInfo = &normalInfo;
+		writes[1].pImageInfo = &terrainInfo;
 
-		// vertexBuffer
+		// Normal image
 		writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[2].dstSet = terrain_descriptors[index];
-		writes[2].dstBinding = 2; // Binding for `vertices` in the shader
+		writes[2].dstBinding = 2;
 		writes[2].dstArrayElement = 0;
-		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		writes[2].descriptorCount = 1;
-		writes[2].pBufferInfo = &vertexBufferInfo;
+		writes[2].pImageInfo = &normalInfo;
 
 		// vertexBuffer
 		writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2963,7 +3024,7 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 		writes[3].dstArrayElement = 0;
 		writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		writes[3].descriptorCount = 1;
-		writes[3].pBufferInfo = &counterBufferInfo;
+		writes[3].pBufferInfo = &vertexBufferInfo;
 
 		// vertexBuffer
 		writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2972,7 +3033,7 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 		writes[4].dstArrayElement = 0;
 		writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		writes[4].descriptorCount = 1;
-		writes[4].pBufferInfo = &counterBufferInfo1;
+		writes[4].pBufferInfo = &counterBufferInfo;
 
 		// vertexBuffer
 		writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2981,12 +3042,59 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 		writes[5].dstArrayElement = 0;
 		writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		writes[5].descriptorCount = 1;
-		writes[5].pBufferInfo = &counterBufferInfo_tri;
+		writes[5].pBufferInfo = &counterBufferInfo1;
+
+		// vertexBuffer
+		writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[6].dstSet = terrain_descriptors[index];
+		writes[6].dstBinding = 6; // Binding for `vertices` in the shader
+		writes[6].dstArrayElement = 0;
+		writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		writes[6].descriptorCount = 1;
+		writes[6].pBufferInfo = &counterBufferInfo_tri;
 
 		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 
-		s72_scene.block_terrain_map[block] = index;
+		// s72_scene.block_terrain_map[block] = index;
+		s72_scene.index_terrain_map[index] = block;
 	}
+}
+
+void Tutorial::generate_noise_texture()
+{
+	vkResetCommandBuffer(terrain_cmd_buf, 0);
+
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // Mark the buffer for single-use
+
+	vkBeginCommandBuffer(terrain_cmd_buf, &beginInfo);
+
+	terrain_transitionImageLayout(terrain_cmd_buf, terrain_noise.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+	terrain_transitionImageLayout(terrain_cmd_buf, terrain_normal.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	// bind cmd pipeline
+	vkCmdBindPipeline(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_noise_pipeline.handle);
+	vkCmdBindDescriptorSets(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_noise_pipeline.layout, 0, 1, &Terrain_noise_descriptor, 0, nullptr);
+
+	// Dispatch with workgroups based on texture dimensions (assuming a workgroup size of 8x8x8 in shader)
+	uint32_t groupCountX = (s72_scene.terrain.length + 1 + 3) / 4;
+	uint32_t groupCountY = (s72_scene.terrain.length + 1 + 3) / 4;
+	uint32_t groupCountZ = (s72_scene.terrain.depth + 1 + 3) / 4;
+	vkCmdDispatch(terrain_cmd_buf, groupCountX, groupCountY, groupCountZ);
+
+	vkEndCommandBuffer(terrain_cmd_buf);
+
+	VkSubmitInfo submitInfo{};
+	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &terrain_cmd_buf;
+
+	// Submit the command buffer to the given queue
+	vkQueueSubmit(rtg.graphics_queue, 1, &submitInfo, fence);
+	// vkQueueWaitIdle(rtg.graphics_queue); // Wait for completion
+	vkWaitForFences(rtg.device, 1, &fence, VK_TRUE, 150000000); // 150ms
+	vkResetFences(rtg.device, 1, &fence);
 }
 
 void Tutorial::run_terrain_generation()
@@ -3008,19 +3116,20 @@ void Tutorial::run_terrain_generation()
 
 	vkBeginCommandBuffer(terrain_cmd_buf, &beginInfo);
 
-	terrain_transitionImageLayout(terrain_cmd_buf, terrain_image.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+	terrain_transitionImageLayout(terrain_cmd_buf, terrain_noise.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 	terrain_transitionImageLayout(terrain_cmd_buf, terrain_normal.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
 	// bind cmd pipeline
 	vkCmdBindPipeline(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.handle);
-	vkCmdBindDescriptorSets(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.layout, 0, 1, &Terrain_descriptor, 0, nullptr);
+	vkCmdBindDescriptorSets(terrain_cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, pterrain_pipeline.layout, 0, 1, &Terrain_noise_descriptor, 0, nullptr);
 
 	// push constant
 	PTerrainPipeline::Push push{
 		.octaves = s72_scene.terrain.octaves,
 		.persistence = s72_scene.terrain.persistence,
 		.scale = s72_scene.terrain.scale,
-		.world_corrodinate = glm::vec3(0, 0, 0),
+		.height_limit = s72_scene.terrain.height_limit,
+		.world_corrodinate = glm::i32vec3(0, 0, 0),
 	};
 
 	vkCmdPushConstants(terrain_cmd_buf, pterrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
@@ -3090,7 +3199,8 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 
 	for (const auto &block : blocks)
 	{
-		uint32_t index = s72_scene.block_terrain_map[block];
+		// uint32_t index = s72_scene.block_terrain_map[block];
+		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
 		auto [x, y, z] = block;
 
 		terrain_transitionImageLayout(terrain_cmd_buf, terrains[index].handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
@@ -3106,7 +3216,8 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 			.octaves = s72_scene.terrain.octaves,
 			.persistence = s72_scene.terrain.persistence,
 			.scale = s72_scene.terrain.scale,
-			.world_corrodinate = glm::vec3(x, y, z),
+			.height_limit = s72_scene.terrain.height_limit,
+			.world_corrodinate = glm::i32vec3(x, y, z),
 		};
 
 		vkCmdPushConstants(terrain_cmd_buf, pterrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
@@ -3161,37 +3272,64 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 
 	for (const auto &block : blocks)
 	{
-		uint32_t index = s72_scene.block_terrain_map[block];
+		uint32_t index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
 		auto [x, y, z] = block;
 		terrain_vertices_count_src[index] = *reinterpret_cast<uint32_t *>(terrain_vertices_counters[index].allocation.mapped);
 		uint32_t *_tri_cnt;
 		_tri_cnt = reinterpret_cast<uint32_t *>(terrain_expected_triangles[index].allocation.mapped);
-		printf("%d,%d,%d vertex cnt : %d, expected tri: %d\n", x, y, z, terrain_vertices_count_src[index], *_tri_cnt);
+		// printf("%d,%d,%d vertex cnt : %d, index of tri[0]: %d\n", x, y, z, terrain_vertices_count_src[index], *_tri_cnt);
 	}
 }
 
-void Tutorial::update_terrain(glm::vec3 pos)
+void Tutorial::update_terrain(glm::vec3 position)
 {
+	const int view_limit = 20;
 	// get current camera position
-	int x = static_cast<int>(std::round(pos.x));
-	int y = static_cast<int>(std::round(pos.y));
-	int z = static_cast<int>(std::round(pos.z));
+	int x = static_cast<int>(std::round(position.x));
+	int y = static_cast<int>(std::round(position.y));
+	int z = static_cast<int>(std::round(position.z));
+
+	// create blocks depending on camera frustum
+	glm::vec3 front = s72_scene.current_camera_new_->front;
+	if (std::abs(front.z) > 1e-3)
+	{
+		float t = -position.z / front.z;
+		glm::vec3 intersection = position + t * front;
+		// printf("intersection at %f, %f\n", intersection.x, intersection.y);
+
+		if (abs(t) <= view_limit)
+		{
+			x = (int)intersection.x;
+			y = (int)intersection.y;
+		}
+	}
+
+	// int z = static_cast<int>(std::round(pos.z));
 
 	std::vector<BlockCoord> blocks;
+	std::vector<BlockCoord> new_blocks;
 
 	// check 3*3*3 block for block_terrain_map
-	for (int k = 0; k < 1; k++)
+	for (int k = 0; k < s72_scene.terrain.height_limit; k++)
 	{
-		for (int j = 0; j < 1; j++)
+		for (int j = -1; j < 2; j++)
 		{
-			for (int i = 0; i < 1; i++)
+			for (int i = -1; i < 2; i++)
 			{
-				if (abs(z + k) > s72_scene.terrain.height_limit)
+				BlockCoord block = std::tuple<int, int, int>(x + i, y + j, k);
+				int block_hash = find_final_hash(block, s72_scene.index_terrain_map);
+				// if (s72_scene.block_terrain_map.find(block) == s72_scene.block_terrain_map.end() ||
+				//	glm::dot(glm::vec3(x + i, y + j, k), position) > pow((view_limit / 2), 2))
+				if (s72_scene.index_terrain_map.find(block_hash) != s72_scene.index_terrain_map.end() &&
+					block == s72_scene.index_terrain_map[block_hash])
 				{
 					continue;
 				}
-				BlockCoord block = std::tuple<int, int, int>(x + i, y + j, z + k);
-				if (s72_scene.block_terrain_map.find(block) == s72_scene.block_terrain_map.end())
+				if (glm::dot(glm::vec3(x + i, y + j, k), position) > pow((view_limit / 2), 2))
+				{
+					continue;
+				}
+
 				{
 					blocks.push_back(block);
 					// printf("make terrain at %d, %d, %d\n", x + i, y + j, z + k);
@@ -3202,11 +3340,75 @@ void Tutorial::update_terrain(glm::vec3 pos)
 		}
 	}
 
+	BlockCoord reference = std::tuple<int, int, int>(x, y, z);
+
+	auto update_block_container = [&](BlockCoordContainer &block_container, BlockCoordContainer &other_container)
+	{
+		if (!block_container.empty())
+		{
+			BlockCoord top_block = block_container.top();
+			auto [x_top, y_top, z_top] = top_block;
+
+			// Skip update if the top block matches and size is sufficient
+			if (x_top == x && y_top == y && z_top == z && block_container.size() >= 49)
+			{
+				// return; // no need to update
+			}
+		}
+
+		// Reinitialize the container with the reference point
+		block_container = BlockCoordContainer(reference);
+		block_container.elements.clear();
+		block_container.elements.reserve(QUEUE_SIZE);
+
+		// Add elements from the other container
+		for (auto &block : other_container.elements)
+		{
+			block_container.push(block);
+		}
+
+		if (!block_container.empty())
+			block_container.sortByDistance();
+
+		// printf("block_container size %zd\n", block_container.size());
+
+		// Process blocks and add new ones
+		for (auto &block : blocks)
+		{
+			auto it = block_container.find(block);
+			if (it == block_container.elements.end())
+			{
+				new_blocks.push_back(block);
+				block_container.push(block);
+			}
+		}
+		while (block_container.size() > QUEUE_SIZE)
+		{
+			block_container.pop();
+		}
+
+		block_container.sortByDistance();
+		printf("size : %zd\n", block_container.size());
+
+		bind_terrain(new_blocks);
+		run_terrain_generation(new_blocks);
+	};
+
+	bool sum_odd = (x + y) % 2 == 1;
+	if (sum_odd)
+	{
+		// update_block_container(s72_scene.odd_block_container, s72_scene.even_block_container);
+	}
+	else
+	{
+		// update_block_container(s72_scene.even_block_container, s72_scene.odd_block_container);
+	}
+
 	bind_terrain(blocks);
-	// printf("bind terrain done!\n");
+	//  printf("bind terrain done!\n");
 
 	run_terrain_generation(blocks);
-	//  printf("run_terrain_generation done!\n");
+	//   printf("run_terrain_generation done!\n");
 }
 
 void Tutorial::setup_terrain_staging_buf()
@@ -3240,10 +3442,10 @@ void Tutorial::setup_terrain_staging_buf()
 
 	// 1. Record Commands (use `setImageLayout` to change the image layout)
 
-	// Transition the `terrain_image` layout for transfer
+	// Transition the `terrain_noise` layout for transfer
 	setImageLayout(
 		commandBuffer,
-		terrain_image.handle,
+		terrain_noise.handle,
 		VK_IMAGE_LAYOUT_GENERAL,
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -3259,7 +3461,7 @@ void Tutorial::setup_terrain_staging_buf()
 	region.imageExtent = {(uint32_t)s72_scene.terrain.length, (uint32_t)s72_scene.terrain.length, (uint32_t)s72_scene.terrain.depth};
 
 	// Perform the copy
-	vkCmdCopyImageToBuffer(commandBuffer, terrain_image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Terrain_buffer_src.handle, 1, &region);
+	vkCmdCopyImageToBuffer(commandBuffer, terrain_noise.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Terrain_buffer_src.handle, 1, &region);
 
 	// 3. End and Submit the Command Buffer
 

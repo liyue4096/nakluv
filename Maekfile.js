@@ -86,6 +86,13 @@ const shadow_shaders = [
 main_objs.push( maek.CPP('pipelines/ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
 
 // to build noise shaders and terrain pipeline
+const compute_terrain_noise = [
+	maek.GLSLC('./shaders/pterrain_noise.comp'),
+];
+main_objs.push( maek.CPP('pipelines/PTerrainNoisePipeline.cpp', undefined, { depends:[...compute_terrain_noise] } ) );
+
+
+// to build noise shaders and terrain pipeline
 const compute_terrain = [
 	maek.GLSLC('./shaders/pterrain.comp'),
 ];

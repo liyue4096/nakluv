@@ -11,4 +11,5 @@ struct Plane
     glm::vec3 normal;
 
     bool pointInFront(glm::vec3 point) const;
+    glm::vec3 intersectPlaneWithZ0();
 };

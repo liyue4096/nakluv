@@ -275,13 +275,25 @@ struct Tutorial : RTG::Application
 			int octaves;
 			float persistence;
 			float scale;
-			glm::vec3 world_corrodinate;
+			float height_limit;
+			glm::i32vec3 world_corrodinate;
 			int padding = 0;
 		};
 
 		void create(RTG &);
 		void destroy(RTG &);
 	} pterrain_pipeline;
+
+	struct PTerrainNoisePipeline
+	{
+		VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &);
+		void destroy(RTG &);
+	} pterrain_noise_pipeline;
 
 	struct PTerrainTrianglePipeline
 	{
@@ -429,7 +441,7 @@ struct Tutorial : RTG::Application
 	inline static VkDescriptorSetLayout shared_descriptor_set_layout = VK_NULL_HANDLE;
 	VkCommandBuffer terrain_cmd_buf = VK_NULL_HANDLE;
 	VkFence fence;
-	Helpers::AllocatedImage terrain_image;
+	Helpers::AllocatedImage terrain_noise;
 	Helpers::AllocatedImage terrain_normal;
 	VkImageView terrain_view = VK_NULL_HANDLE;
 	VkImageView terrain_normal_view = VK_NULL_HANDLE;
@@ -443,7 +455,7 @@ struct Tutorial : RTG::Application
 
 	Helpers::AllocatedBuffer Terrain_buffer_src; // host coherent; mapped
 	// Helpers::AllocatedBuffer Terrain_buffer;	 // device-local
-	VkDescriptorSet Terrain_descriptor;
+	VkDescriptorSet Terrain_noise_descriptor;
 	std::vector<VkDescriptorSet> terrain_descriptors; // Terrain
 
 	std::vector<Helpers::AllocatedBuffer> terrain_vertices;
@@ -501,9 +513,10 @@ struct Tutorial : RTG::Application
 	void prepare_terrain();
 	void create_shared_descriptor_layout();
 	void setup_terrain_descriptor();
-	void bind_terrain();
+	void bind_terrain_noise();
 	void bind_terrain(std::vector<BlockCoord> &blocks);
 	void make_terrain_descriptor_sets();
+	void generate_noise_texture();
 	void run_terrain_generation(std::vector<BlockCoord> &blocks);
 	void run_terrain_generation();
 	void setup_terrain_staging_buf(); // 3d texture -> cpu staging buffer

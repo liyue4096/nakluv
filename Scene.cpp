@@ -727,6 +727,12 @@ void get_scene(const std::vector<sejp::value> &array)
                 {
                     s72_scene.terrain.material_name = material_opt->second.as_string().value();
                 }
+                // Get "height_limit" field (optional)
+                if (auto height_limit_opt = obj.find("heightLimit"); height_limit_opt != obj.end() && height_limit_opt->second.as_number())
+                {
+                    s72_scene.terrain.height_limit = static_cast<float>(height_limit_opt->second.as_number().value_or(0));
+                    printf("s72_scene.terrain.height_limit %f\n", s72_scene.terrain.height_limit);
+                }
             }
         }
 

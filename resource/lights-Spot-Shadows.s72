@@ -488,14 +488,14 @@
 	"name":"terrain",
 	"length":32,
 	"depth":32,
-	"octaves":2,
+	"octaves":6,
 	"persistence":2,
-	"scale":5,
-	"heightlimit":3,
+	"scale":1,
+	"heightLimit":3,
 	"blockSize":2,
 	"controlImage":{"src":"image.png"},
 	"noiseSource":{"src":"source.png"},
-	"material":"pbr:checker"
+	"material":"lambertian:terrain"
 },
 {
 	"type":"SCENE",

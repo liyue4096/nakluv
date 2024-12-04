@@ -4,8 +4,8 @@
 shared uint n;
 
 // Input images
-layout(binding = 0, rgba8) uniform readonly image3D terrainImage; // Density map
-layout(binding = 1, rgba32f) uniform readonly image3D normalMap;    // Normal map
+layout(binding = 1, rgba8) uniform readonly image3D terrainImage; // Density map
+layout(binding = 2, rgba32f) uniform readonly image3D normalMap;    // Normal map
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -15,21 +15,21 @@ struct Vertex {
     vec2 texCoord;
 };
 // Output buffer with position and normal
-layout(binding = 2, std430) buffer VertexBuffer {
+layout(binding = 3, std430) buffer VertexBuffer {
     Vertex vertices[];
 };
 
 // Atomic counter to manage vertex allocation
-layout(binding = 3, std430) buffer CounterBuffer {
+layout(binding = 4, std430) buffer CounterBuffer {
     uint vertexCount;
 };
 
 // Atomic counter to manage vertex allocation
-layout(binding = 4, std430) buffer IndexBuffer {
+layout(binding = 5, std430) buffer IndexBuffer {
     uint index;
 };
 
-layout(binding = 5, std430) buffer CounterTri {
+layout(binding = 6, std430) buffer CounterTri {
     uint caseCounter[];
 };
 
@@ -159,15 +159,15 @@ void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 nor
         uint baseIndex = atomicAdd(vertexCount, 3);
 
         // Write positions and normals to the buffer
-        vertices[baseIndex + 0].pos = v0/16;
+        vertices[baseIndex + 0].pos = v0/32;
         vertices[baseIndex + 0].normal = n0;
         vertices[baseIndex + 0].texCoord = uv0;
 
-        vertices[baseIndex + 1].pos = v1/16;
+        vertices[baseIndex + 1].pos = v1/32;
         vertices[baseIndex + 1].normal = n1;
         vertices[baseIndex + 1].texCoord = uv1;
 
-        vertices[baseIndex + 2].pos = v2/16;
+        vertices[baseIndex + 2].pos = v2/32;
         vertices[baseIndex + 2].normal = n2;
         vertices[baseIndex + 2].texCoord = uv2;
     }
