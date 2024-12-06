@@ -16,6 +16,19 @@ layout(push_constant) uniform Push {
     ivec3 worldOffset;     // Input position offset (x, y, z)
 } push;
 
+int hash(ivec3 p) {
+    // Simple hash combining x, y, z with the permutation table
+    return perm[(p.x + perm[(p.y + perm[p.z % 256]) % 256]) % 256];
+}
+
+float randomNoise(ivec3 p) {
+    return float(hash(p)) / 255.0; // Normalize to [0.0, 1.0]
+}
+
+float fade(vec3 t) {
+    return t.x * t.y * t.z * (1.0 - t.x) * (1.0 - t.y) * (1.0 - t.z);
+}
+
 // Perlin noise function (simple implementation)
 float fractalNoise(vec3 pos, int octaves, float persistence) {
     float sum = 0.0;
@@ -55,9 +68,38 @@ vec3 computeNormal(vec3 pos) {
     return normalize(vec3(dx, dy, dz));
 }
 
+// Random wave function for modulation
+float randomWave(float baseRotationAngle, vec3 dir, vec3 position, float scale, float frequency) {
+    // float baseRotationAngle = 0.0709;
+    float dynamicAngle = baseRotationAngle * float(cos(mod(position.x, 13)) * sin (mod(position.y, 7)) + mod(mod(position.x /19 , 11) - mod(position.y / 15, 17), 13));
+    mat3 dynamicRotationMatrix = mat3(
+        vec3(cos(dynamicAngle), -sin(dynamicAngle), 0.5536),
+        vec3(sin(dynamicAngle),  cos(dynamicAngle), 0.789),
+        vec3(0.2378,             0.3421,            1.0)
+    );
+    vec3 dir_new = dynamicRotationMatrix * dir; // vec3(12.9898, 78.233, 45.164);
+    return sin(dot(position, dir_new) * frequency) * scale;
+}
+
+// Function to calculate layered balls
+float layeredBalls(float baseRotationAngle, vec3 dir, vec3 worldPos, vec3 ballCenter, float ballRadius, float waveScale, float waveFrequency) {
+    float distanceToCenter = length(mod(worldPos, 20.0) - ballCenter);
+    float baseNoise = clamp(1.0 - (distanceToCenter / ballRadius), 0.0, 1.0);
+    
+    // Add a random wave modulation
+    float wave = randomWave(baseRotationAngle, dir, worldPos, waveScale, waveFrequency);
+    return clamp(baseNoise + wave, 0.0, 1.0);
+}
+
+float squareWave(float x, float frequency, float amplitude) {
+    // Use a sine wave to create a square wave
+    return amplitude * sign(sin(2.0 * 3.14159265 * frequency * x));
+}
+
 void main() {
     ivec3 voxelCoord = ivec3(gl_GlobalInvocationID.xyz);
     ivec3 Size = imageSize(inputTexture); // Get the texture size
+    vec3 blockPosition = vec3(voxelCoord.x / Size.x, voxelCoord.y / Size.y, voxelCoord.z / Size.z);
 
     // Skip out-of-bounds threads
     if (any(greaterThanEqual(voxelCoord, Size))) {
@@ -88,8 +130,8 @@ void main() {
     float baseRotationAngle = 0.5236; // Example rotation angle in radians (~30 degrees)
 
     // Multi-octave noise generation
-    float noiseScale = 0.25; // Base scale for noise
-    float amplitude = 0.5;  // Base amplitude
+    float noiseScale = 0.2; // Base scale for noise
+    float amplitude = 1.5;  // Base amplitude
     float frequency = 1.0;  // Base frequency
     float finalNoise = imageLoad(inputTexture, input_voxelCoord).r; // Accumulated noise
     int octaves = 3;        // Number of octaves
@@ -126,7 +168,7 @@ void main() {
         float noiseValue = imageLoad(inputTexture, rotatedVoxelCoord).r;
 
         // Accumulate noise
-        // finalNoise += noiseValue * amplitude;
+        finalNoise += noiseValue * amplitude * fade(wrappedPos);
 
         // Update frequency and amplitude for the next octave
         frequency *= lacunarity; // Increase frequency
@@ -139,25 +181,54 @@ void main() {
     // float noiseScale = 0.27; // Scale the noise effect
     float noisySpot = finalNoise * noiseScale;
 
-    vec3 ballCenter = vec3(3, 3, 1.5);
-    float ballRadius = 2;
-    float distanceToCenter = length(worldPos - ballCenter);
+    vec3 ballCenter = vec3(6, 6, 3);
+    float ballRadius = 4.5;
+    float distanceToCenter = length(mod(worldPos, 19.0) - ballCenter);
+    float noise0 = clamp(1.0 - (distanceToCenter / ballRadius), 0.0, 1.0);
+
+    vec3 ballCenter_1 = vec3(5.1, 4.9, 1.2);
+    float ballRadius_1 = 1.8;
+    float distanceToCenter_1 = length(mod(worldPos, 13.0) - ballCenter_1);
+    float noise1 = clamp(1.0 - (distanceToCenter_1 / ballRadius_1), 0.0, 1.0);
+
+    vec3 ballCenter_2 = vec3(10, 10, 5);
+    float ballRadius_2 = 3.0;
+    float noise2 = layeredBalls(0.07856, vec3(12.9898, 78.233, 45.164), worldPos, ballCenter_2, ballRadius_2, 0.15, 0.08);
+
+    vec3 ballCenter_3 = vec3(15, 15, 4);
+    float ballRadius_3 = 3.0;
+    float noise3 = layeredBalls(0.0598, vec3(78.233, 12.9898, 45.164), worldPos, ballCenter_3, ballRadius_3, 0.1, 0.07);
+
+    vec3 ballCenter_4 = vec3(4, 3, 3);
+    float ballRadius_4 = 2.0;
+    float noise4 = layeredBalls(0.0358, vec3(45.164, 78.233, 12.9898), worldPos, ballCenter_4, ballRadius_4, 0.05, 0.06);
+
+    float waveFrequency = 0.1; // Frequency of the wave
+    float waveAmplitude = 0.2; // Amplitude of the wave
+    float squareWaveValue = squareWave(worldPos.z, waveFrequency, waveAmplitude);
+    float squareWaveValue1 = squareWave(mod(worldPos.x, 2.0) * mod(worldPos.y, 3.0), 0.05, 0.1);
+    
+    ivec3 offsetPosition = ivec3(floor(worldPos));
+    float fadeWeights = fade(blockPosition);
+    float randomValue = randomNoise(offsetPosition);
+    randomValue = clamp (fadeWeights * randomValue, 0, 1);
 
     // Add noise to base terrain
     float baseValue = worldPos.z / push.height_limit;
-    float finalValue = clamp(1.0 - (distanceToCenter / ballRadius), 0.0, 1.0); //= baseValue - noisySpot;
-    finalValue = clamp (finalValue, 0, 1);
+    float finalValue = baseValue + noisySpot + noise0 - noise1 + noise2 - noise3 + noise4 + randomValue; //= baseValue - noisySpot;
+    finalValue += squareWaveValue - squareWaveValue1;
+    // finalValue = clamp (finalValue, 0, 1);
 
     // Write final value to a texture
     imageStore(terrainTexture, voxelCoord, vec4(finalValue, 0.0, 0.0, 1.0));
 
     // Compute gradient to generate normals
     float dx = imageLoad(inputTexture, voxelCoord + ivec3(1, 0, 0)).r - 
-               imageLoad(inputTexture, voxelCoord - ivec3(1, 0, 0)).r;
+               imageLoad(inputTexture, voxelCoord).r;
     float dy = imageLoad(inputTexture, voxelCoord + ivec3(0, 1, 0)).r - 
-               imageLoad(inputTexture, voxelCoord - ivec3(0, 1, 0)).r;
+               imageLoad(inputTexture, voxelCoord).r;
     float dz = imageLoad(inputTexture, voxelCoord + ivec3(0, 0, 1)).r - 
-               imageLoad(inputTexture, voxelCoord - ivec3(0, 0, 1)).r;
+               imageLoad(inputTexture, voxelCoord).r;
 
     vec3 gradient = vec3(dx, dy, dz);
     vec3 normal = normalize(gradient); // Normalize gradient to get the normal
@@ -165,63 +236,4 @@ void main() {
     // Store normal in normalTexture
     vec3 packedNormal = normal * 0.5 + 0.5; // Pack to [0, 1] range for storage
     imageStore(normalTexture, voxelCoord, vec4(packedNormal, 1.0));
-}
-
-void main_old() {
-    ivec3 texCoord = ivec3(gl_GlobalInvocationID.xyz);
-    ivec3 Size = imageSize(terrainTexture); // Get the texture size
-    // Skip out-of-bounds threads
-    if (any(greaterThanEqual(texCoord, Size))) {
-        return; // Exit the shader for out-of-bounds threads
-    }
-    
-    vec3 normalizedPos = vec3(texCoord) / vec3(imageSize(terrainTexture));
-    // Scale and shift to match the input position offset
-    vec3 worldPos = normalizedPos * push.scale + push.worldOffset;
-    
-    // Scale to control noise frequency
-    int octaves = push.octaves;         // Number of noise layers
-    float persistence = push.persistence; // Controls amplitude scaling between layers
-    float noiseScale = push.scale;
-    
-    // Compute terrain density value
-    float noiseValue = fractalNoise(worldPos, octaves, persistence);
-
-    vec3 normal = vec3(0.0);
-    uint packedNormal = 0;
-
-    if(noiseValue > 0.3333 && noiseValue < 0.6667){
-        // Compute normal vector
-        // normal = computeNormal(worldPos);
-        normal = vec3 (0,1,0);
-        //packedNormal = packR11G11B10UF(normal.r, normal.g, normal.b);
-    }
-
-    // Write normal to normalTexture (packed format)
-    // imageStore(normalTexture, texCoord, uvec4(packedNormal, 0, 0, 0)); // Pack as float RGB
-    imageStore(normalTexture, texCoord, vec4(normal, 1.0));
-
-    float base = worldPos.z / push.height_limit;
-
-    float frequency = 1.5; // Number of oscillations
-    float amplitude = 0.2;  // Height of the wave (from 0 to 1)
-
-    // Sine wave based on x-coordinate
-    float sineWave = amplitude * sin(2.0 * 3.14159265 * frequency * (worldPos.x));
-
-    vec2 target = vec2(0.5, 0.5); // Target position
-    float radius = 0.2;
-    float test_noise = 0.;
-    if (distance(normalizedPos.xy, target) < radius) {
-        test_noise = 0.5 * distance(normalizedPos.xy, target);
-    }
-
-    noiseValue = sin(base) + 0.5 * noiseValue;
-    noiseValue = clamp(noiseValue, 0.0, 1.0);
-
-    // Convert to 8-bit grayscale and write to texture
-    vec4 color = vec4(vec3(noiseValue), 1.0);
-    
-    imageStore(terrainTexture, texCoord, color);
-
 }

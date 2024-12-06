@@ -33,6 +33,14 @@ layout(binding = 6, std430) buffer CounterTri {
     uint caseCounter[];
 };
 
+layout(push_constant) uniform Push {
+    int octaves;
+    float persistence;
+    float scale;
+    float height_limit;
+    ivec3 worldOffset;     // Input position offset (x, y, z)
+} push;
+
 const vec3 cornerPositions[8] = vec3[](
     vec3(0, 0, 0), // v0
     vec3(0, 1, 0), // v1
@@ -99,18 +107,14 @@ int calculateCaseIndex(float densities[8]) {
     return caseIndex;
 }
 
-vec2 generateCylindricalUV(vec3 worldPos, float zMin, float zMax) {
-    vec3 normalized = normalize(worldPos);
+vec3 fetchNormal(ivec3 coord) {
+    vec4 packedNormal = imageLoad(normalMap, coord); // Load as a vec4
+    return normalize(packedNormal.rgb);             // Use the .rgb and normalize
+}
 
-    // Map z to the range [0, 1] based on zMin and zMax
-    float zFactor = clamp((worldPos.z - zMin) / (zMax - zMin), 0.0, 1.0);
-
-    // Invert zFactor so that small z -> u close to 1, large z -> u close to 0
-    float u = 1.0 - zFactor;
-
-    // Keep the v coordinate as height (Y axis)
-    float v = normalized.y * 0.5 + 0.5;
-
+vec2 generateCylindricalUV(vec3 position, float world_z, float zMin, float zMax) {
+    float u = atan(position.y, position.x) / (2.0 * 3.14159);  // Angle around the axis
+    float v = (world_z - zMin) / (zMax - zMin);       // Height normalized
     return vec2(u, v);
 }
 
@@ -126,13 +130,61 @@ vec2 randomPerturbation(vec3 position, float scale) {
     return vec2(randX, randY) * scale - (scale * 0.5); // Scale and center around 0
 }
 
+void emiteBaseTriangles(int caseIndex){
+    float zMin, zMax;
+    zMin = 0, zMax = 4;
+    if(caseIndex == 0 && push.worldOffset.z == 0){
+        vec3 v0 = vec3(0, 0, 0.5); // Bottom-left corner
+        vec3 v1 = vec3(1, 0, 0.5); // Bottom-right corner
+        vec3 v2 = vec3(0, 1, 0.5); // Top-left corner
+        vec3 v3 = vec3(1, 1, 0.5); // Top-right corner
+        vec3 n = vec3(0, 0 ,1);
+
+        vec3 centroid_cor = v0 / 3.0;
+        vec2 baseUV = generateCylindricalUV(centroid_cor, 0.0, zMin, zMax);
+
+
+        // Atomically allocate space for 2 triangle
+        uint baseIndex = atomicAdd(vertexCount, 6);
+
+        vertices[baseIndex + 0].pos = v0;
+        vertices[baseIndex + 0].normal = n;
+        vertices[baseIndex + 0].texCoord = baseUV;
+
+        vertices[baseIndex + 1].pos = v1;
+        vertices[baseIndex + 1].normal = n;
+        vertices[baseIndex + 1].texCoord = baseUV;
+
+        vertices[baseIndex + 2].pos = v2;
+        vertices[baseIndex + 2].normal = n;
+        vertices[baseIndex + 2].texCoord = baseUV;
+
+        vertices[baseIndex + 3].pos = v3;
+        vertices[baseIndex + 3].normal = n;
+        vertices[baseIndex + 3].texCoord = baseUV;
+
+        vertices[baseIndex + 4].pos = v1;
+        vertices[baseIndex + 4].normal = n;
+        vertices[baseIndex + 4].texCoord = baseUV;
+
+        vertices[baseIndex + 5].pos = v2;
+        vertices[baseIndex + 5].normal = n;
+        vertices[baseIndex + 5].texCoord = baseUV;
+    }
+}
+
 void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 normals[8]) {
     // Lookup the triangle configuration based on caseIndex
     int[15] triangleIndices = TRI_TABLE[caseIndex];
     float zMin, zMax;
-    zMin = 0, zMax = 10;
+    zMin = 0, zMax = 3;
 
     for (int i = 0; i < 15; i += 3) {
+        
+        if (caseIndex == 0) {
+            // emiteBaseTriangles(caseIndex);
+        }
+
         // Stop when no more triangles
         if (triangleIndices[i] == -1) break;
 
@@ -147,13 +199,24 @@ void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 nor
         vec3 n2 = interpolateNormal(normals, triangleIndices[i + 2]);
 
         // Compute base UV for the triangle (e.g., from the centroid)
-        vec3 centroid_cor = (v0 + v1 + v2) / 3.0;
-        vec2 baseUV = generateCylindricalUV(centroid_cor, zMin, zMax);
-        float perturbScale = 1/32;
-        // Add small variance to the UVs for each vertex
-        vec2 uv0 = baseUV + randomPerturbation(v0, perturbScale); // Small offset for v0
-        vec2 uv1 = baseUV + randomPerturbation(v1, perturbScale); // Small offset for v1
-        vec2 uv2 = baseUV + randomPerturbation(v2, perturbScale); // Small offset for v2
+        // vec3 centroid_cor = (v0 + v1 + v2) / 3.0;
+        // vec2 baseUV = generateCylindricalUV(centroid_cor, zMin, zMax);
+        // float perturbScale = 1/32;
+        // // Add small variance to the UVs for each vertex
+        // vec2 uv0 = baseUV + 10*randomPerturbation(v0, perturbScale); // Small offset for v0
+        // vec2 uv1 = baseUV + 10*randomPerturbation(v1, perturbScale); // Small offset for v1
+        // vec2 uv2 = baseUV + 10*randomPerturbation(v2, perturbScale); // Small offset for v2
+
+        // Generate UVs for each vertex based on cylindrical mapping
+        vec3 v0_uv = push.worldOffset + v0 * push.scale/32;
+        vec3 v1_uv = push.worldOffset + v1 * push.scale/32;
+        vec3 v2_uv = push.worldOffset + v2 * push.scale/32;
+
+
+
+        vec2 uv0 = generateCylindricalUV(mod(v0_uv, 7.), push.worldOffset.z + v0.z / 32, zMin, zMax);
+        vec2 uv1 = generateCylindricalUV(mod(v1_uv, 7.), push.worldOffset.z + v1.z / 32, zMin, zMax);
+        vec2 uv2 = generateCylindricalUV(mod(v2_uv, 7.), push.worldOffset.z + v2.z / 32, zMin, zMax);
 
         // Atomically allocate space for 3 vertices
         uint baseIndex = atomicAdd(vertexCount, 3);
@@ -199,14 +262,23 @@ void main() {
 
     // Fetch normals from the normal map
     vec3 normals[8];
-    normals[0] = imageLoad(normalMap, voxelCoord).rgb;
-    normals[1] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 0)).rgb;
-    normals[2] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 0)).rgb;
-    normals[3] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 0)).rgb;
-    normals[4] = imageLoad(normalMap, voxelCoord + ivec3(0, 0, 1)).rgb;
-    normals[5] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 1)).rgb;
-    normals[6] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 1)).rgb;
-    normals[7] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 1)).rgb;
+    // normals[0] = imageLoad(normalMap, voxelCoord).rgb;
+    // normals[1] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 0)).rgb;
+    // normals[2] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 0)).rgb;
+    // normals[3] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 0)).rgb;
+    // normals[4] = imageLoad(normalMap, voxelCoord + ivec3(0, 0, 1)).rgb;
+    // normals[5] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 1)).rgb;
+    // normals[6] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 1)).rgb;
+    // normals[7] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 1)).rgb;
+
+    normals[0] = fetchNormal(voxelCoord);
+    normals[1] = fetchNormal(voxelCoord + ivec3(0, 1, 0));
+    normals[2] = fetchNormal(voxelCoord + ivec3(1, 1, 0));
+    normals[3] = fetchNormal(voxelCoord + ivec3(1, 0, 0));
+    normals[4] = fetchNormal(voxelCoord + ivec3(0, 0, 1));
+    normals[5] = fetchNormal(voxelCoord + ivec3(0, 1, 1));
+    normals[6] = fetchNormal(voxelCoord + ivec3(1, 1, 1));
+    normals[7] = fetchNormal(voxelCoord + ivec3(1, 0, 1));
 
     // Generate triangles
     emitTriangles(caseIndex, voxelCoord, densities, normals);

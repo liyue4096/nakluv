@@ -306,7 +306,7 @@ using BlockCoord = std::tuple<int, int, int>;
 #ifndef POOL_HPP
 #define POOL_HPP
 
-inline constexpr int POOL_SIZE = 512;
+inline constexpr int POOL_SIZE = 1024;
 inline constexpr int QUEUE_SIZE = 128;
 
 #endif
@@ -415,7 +415,7 @@ static inline int find_final_hash(const BlockCoord &block, std::unordered_map<in
         const auto &[bx, by, bz] = block;
         int squared_distance = (bx - ex) * (bx - ex) + (by - ey) * (by - ey) + (bz - ez) * (bz - ez);
 
-        if (squared_distance > 27)
+        if (squared_distance > 150)
         {
             // Distance is safe, hash value is appropriate
             return hash_value;

@@ -10,7 +10,7 @@
 	"type":"MATERIAL",
 	"name":"lambertian:terrain",
 	"lambertian":{
-		"albedo":{ "src":"terrain.png", "format":"srgb" }
+		"albedo":{ "src":"terrain101.png", "format":"srgb" }
 	}
 },
 {

@@ -56,7 +56,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	load_s72();
 
 	// create pipelines
-	//  background_pipeline.create(rtg, render_pass, 0);
+	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
 	scenes_pipeline.create(rtg, render_pass, 0);
@@ -373,7 +373,7 @@ Tutorial::~Tutorial()
 		shared_descriptor_set_layout = VK_NULL_HANDLE;
 	}
 
-	// background_pipeline.destroy(rtg);
+	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
 	scenes_pipeline.destroy(rtg);
@@ -1349,6 +1349,11 @@ void Tutorial::render_pass_command(RTG::RenderParams const &render_params, VkFra
 			};
 			vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
 		}
+	}
+
+	{ // draw with the background pipeline:
+		vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, background_pipeline.handle);
+		vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 	}
 
 	// draw terrain here
@@ -3253,6 +3258,8 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 		vkCmdFillBuffer(terrain_cmd_buf, terrain_index[index].handle, 0, sizeof(uint32_t), 0);
 		vkCmdFillBuffer(terrain_cmd_buf, terrain_expected_triangles[index].handle, 0, sizeof(uint32_t), 0);
 
+		vkCmdPushConstants(terrain_cmd_buf, pterrain_triangle_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+
 		// Dispatch work for mesh generation
 		vkCmdDispatch(terrain_cmd_buf, s72_scene.terrain.length / 4, s72_scene.terrain.length / 4, s72_scene.terrain.depth / 4);
 	}
@@ -3318,8 +3325,7 @@ void Tutorial::update_terrain(glm::vec3 position)
 			{
 				BlockCoord block = std::tuple<int, int, int>(x + i, y + j, k);
 				int block_hash = find_final_hash(block, s72_scene.index_terrain_map);
-				// if (s72_scene.block_terrain_map.find(block) == s72_scene.block_terrain_map.end() ||
-				//	glm::dot(glm::vec3(x + i, y + j, k), position) > pow((view_limit / 2), 2))
+
 				if (s72_scene.index_terrain_map.find(block_hash) != s72_scene.index_terrain_map.end() &&
 					block == s72_scene.index_terrain_map[block_hash])
 				{
@@ -3327,7 +3333,7 @@ void Tutorial::update_terrain(glm::vec3 position)
 				}
 				if (glm::dot(glm::vec3(x + i, y + j, k), position) > pow((view_limit / 2), 2))
 				{
-					continue;
+					// continue;
 				}
 
 				{
@@ -4073,7 +4079,7 @@ void Tutorial::move_camera(float elapsed, Node *node_)
 	// move camera:
 	{
 		// combine inputs into a move:
-		constexpr float PlayerSpeed = 6.f;
+		constexpr float PlayerSpeed = 4.f;
 		glm::vec3 move = glm::vec3(0.0f);
 		if (playmode.left.pressed && !playmode.right.pressed)
 			move.x = -1.0f;

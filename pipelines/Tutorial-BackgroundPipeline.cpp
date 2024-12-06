@@ -17,18 +17,18 @@ void Tutorial::BackgroundPipeline::create(RTG &rtg, VkRenderPass render_pass, ui
 
     {
         // create pipeline layout:
-        VkPushConstantRange range{
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-            .offset = 0,
-            .size = sizeof(Push),
-        };
+        // VkPushConstantRange range{
+        //     .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        //     .offset = 0,
+        //     .size = sizeof(Push),
+        // };
 
         VkPipelineLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = 0,
             .pSetLayouts = nullptr,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &range,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = nullptr,
         };
 
         VK(vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
