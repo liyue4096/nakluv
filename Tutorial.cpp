@@ -673,6 +673,8 @@ void Tutorial::render_terrain(Workspace &workspace)
 
 	Frustum camera_frustum = Frustum::createFrustumFromCamera(*s72_scene.current_camera_new_);
 
+	auto tStart = std::chrono::high_resolution_clock::now();
+
 	// glm::vec3 pos = s72_scene.current_camera_new_->position;
 
 	for (const auto &[index, block] : s72_scene.index_terrain_map)
@@ -681,6 +683,10 @@ void Tutorial::render_terrain(Workspace &workspace)
 		// Compute world position of the block (assuming block_coord corresponds to world position)
 		auto [x, y, z] = block;
 		glm::vec3 block_world_position = glm::vec3(x, y, z);
+
+		if (auto i = coor2longlong(block);
+			s72_scene.terrain_empty_block_map.find(i) != s72_scene.terrain_empty_block_map.end())
+			continue;
 
 		BBox bbox_trans;
 		bbox_trans.enclose(block_world_position);
@@ -711,6 +717,10 @@ void Tutorial::render_terrain(Workspace &workspace)
 			  });
 
 	// BlockCoord test_block = std::tuple<int, int, int>(0, 0, 0);
+	auto tEnd = std::chrono::high_resolution_clock::now();
+	[[maybe_unused]] auto tDiff = std::chrono::duration<double, std::micro>(tEnd - tStart).count();
+
+	// std::cout << tDiff << std::endl;
 
 	// printf("try to render_terrain at 0,0,0 with vertices cnt: %d\n", terrain_vertices_count_src[index]);
 	// std::vector<int> block_indexs;
@@ -721,7 +731,7 @@ void Tutorial::render_terrain(Workspace &workspace)
 	{
 		auto [x, y, z] = block;
 		// uint32_t index = s72_scene.block_terrain_map[block_coord];
-		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
+		int index = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map); // hash(block);
 		uint32_t *data = (uint32_t *)terrain_vertices_counters[index].allocation.mapped;
 
 		if (*data == 0)
@@ -2770,7 +2780,7 @@ void Tutorial::prepare_terrain()
 	// terrain_descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	// terrain_descriptor.imageView = terrain_view;
 	// terrain_descriptor.sampler = terrain_sampler;
-	const int maxTriangle = (int)4e4;
+	const int maxTriangle = (int)2e4;
 	terrain_vertices_count_src.assign(POOL_SIZE, 0);
 
 	size_t bytes = 3 * maxTriangle * sizeof(PTerrainTrianglePipeline::Vertex);
@@ -2951,7 +2961,7 @@ void Tutorial::bind_terrain(std::vector<BlockCoord> &blocks)
 	for (auto block : blocks)
 	{
 		// int index = (int)BlockCoordHash{}(block);
-		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
+		int index = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map); // hash(block);
 		// printf("target index: %d\n", index);
 		// Descriptor for terrain noise image
 		VkDescriptorImageInfo noiseInfo{};
@@ -3108,7 +3118,8 @@ void Tutorial::run_terrain_generation()
 	auto tStart = std::chrono::high_resolution_clock::now();
 
 	BlockCoord block(0, 0, 0);
-	uint32_t index = s72_scene.block_terrain_map[block];
+	int index = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map); // hash(block);
+
 	std::vector<BlockCoord> blocks;
 	blocks.push_back(block);
 	bind_terrain(blocks);
@@ -3194,6 +3205,8 @@ void Tutorial::run_terrain_generation()
 
 void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 {
+	auto tStart = std::chrono::high_resolution_clock::now();
+
 	vkResetCommandBuffer(terrain_cmd_buf, 0);
 
 	VkCommandBufferBeginInfo beginInfo{};
@@ -3205,7 +3218,7 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 	for (const auto &block : blocks)
 	{
 		// uint32_t index = s72_scene.block_terrain_map[block];
-		int index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
+		int index = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map); // hash(block);
 		auto [x, y, z] = block;
 
 		terrain_transitionImageLayout(terrain_cmd_buf, terrains[index].handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
@@ -3277,13 +3290,23 @@ void Tutorial::run_terrain_generation(std::vector<BlockCoord> &blocks)
 	vkWaitForFences(rtg.device, 1, &fence, VK_TRUE, 150000000); // 150ms
 	vkResetFences(rtg.device, 1, &fence);
 
+	auto tEnd = std::chrono::high_resolution_clock::now();
+	[[maybe_unused]] auto tDiff = std::chrono::duration<double, std::micro>(tEnd - tStart).count();
+
+	// std::cout << tDiff << std::endl;
+
 	for (const auto &block : blocks)
 	{
-		uint32_t index = find_final_hash(block, s72_scene.index_terrain_map); // hash(block);
+		uint32_t index = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map); // hash(block);
 		auto [x, y, z] = block;
 		terrain_vertices_count_src[index] = *reinterpret_cast<uint32_t *>(terrain_vertices_counters[index].allocation.mapped);
 		uint32_t *_tri_cnt;
 		_tri_cnt = reinterpret_cast<uint32_t *>(terrain_expected_triangles[index].allocation.mapped);
+		if (terrain_vertices_count_src[index] <= 1)
+		{
+			long long i = coor2longlong(block);
+			s72_scene.terrain_empty_block_map[i] = false;
+		}
 		// printf("%d,%d,%d vertex cnt : %d, index of tri[0]: %d\n", x, y, z, terrain_vertices_count_src[index], *_tri_cnt);
 	}
 }
@@ -3324,7 +3347,13 @@ void Tutorial::update_terrain(glm::vec3 position)
 			for (int i = -1; i < 2; i++)
 			{
 				BlockCoord block = std::tuple<int, int, int>(x + i, y + j, k);
-				int block_hash = find_final_hash(block, s72_scene.index_terrain_map);
+
+				// omit empty block
+				if (auto index = coor2longlong(block);
+					s72_scene.terrain_empty_block_map.find(index) != s72_scene.terrain_empty_block_map.end())
+					continue;
+
+				int block_hash = find_final_hash(block, s72_scene.index_terrain_map, s72_scene.terrain_empty_block_map);
 
 				if (s72_scene.index_terrain_map.find(block_hash) != s72_scene.index_terrain_map.end() &&
 					block == s72_scene.index_terrain_map[block_hash])

@@ -488,13 +488,11 @@
 	"name":"terrain",
 	"length":32,
 	"depth":32,
-	"octaves":6,
+	"octaves":2,
 	"persistence":2,
-	"scale":1,
+	"scale":1.05,
 	"heightLimit":3,
-	"blockSize":2,
-	"controlImage":{"src":"image.png"},
-	"noiseSource":{"src":"source.png"},
+	"blockSize":1,
 	"material":"lambertian:terrain"
 },
 {

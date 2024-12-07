@@ -387,6 +387,12 @@ static inline int hash(int x, int y, int z)
     return ((x * 31) ^ (y * 37) ^ (z * 41)) % POOL_SIZE;
 }
 
+static inline long long coor2longlong(const BlockCoord &block)
+{
+    auto [x, y, z] = block;
+    return ((x % (int)1e6) + (long long)1e6 * (y % (int)1e6) + (long long)1e12 * (z % (int)1e3));
+}
+
 static inline int hash(const BlockCoord &block)
 {
     auto [x, y, z] = block;
@@ -394,7 +400,8 @@ static inline int hash(const BlockCoord &block)
     return (raw_hash % POOL_SIZE + POOL_SIZE) % POOL_SIZE;
 }
 
-static inline int find_final_hash(const BlockCoord &block, std::unordered_map<int, BlockCoord> &index_terrain_map)
+static inline int find_final_hash(const BlockCoord &block, std::unordered_map<int, BlockCoord> &index_terrain_map,
+                                  std::unordered_map<long long, bool> &terrain_empty_block_map)
 {
     int hash_value = hash(block); // Initial hash value
     while (true)
@@ -409,13 +416,18 @@ static inline int find_final_hash(const BlockCoord &block, std::unordered_map<in
         {
             return hash_value;
         }
+        if (auto index = coor2longlong(block);
+            terrain_empty_block_map.find(index) != terrain_empty_block_map.end())
+        {
+            return hash_value;
+        }
 
         // Check the squared distance
         const auto &[ex, ey, ez] = it->second; // Existing block at the current hash
         const auto &[bx, by, bz] = block;
         int squared_distance = (bx - ex) * (bx - ex) + (by - ey) * (by - ey) + (bz - ez) * (bz - ez);
 
-        if (squared_distance > 150)
+        if (squared_distance > 144)
         {
             // Distance is safe, hash value is appropriate
             return hash_value;
@@ -455,10 +467,8 @@ struct S72_scene
     Environment environment; // unique
     PTerrainObject terrain;
     // Map block coordinates to texture indices in the pool
-    std::unordered_map<BlockCoord, int, BlockCoordHash> block_terrain_map;
     std::unordered_map<int, BlockCoord> index_terrain_map;
-    BlockCoordContainer odd_block_container;
-    BlockCoordContainer even_block_container;
+    std::unordered_map<long long, bool> terrain_empty_block_map;
 };
 
 void get_scene(const std::vector<sejp::value> &array);

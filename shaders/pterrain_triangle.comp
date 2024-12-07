@@ -180,10 +180,6 @@ void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 nor
     zMin = 0, zMax = 3;
 
     for (int i = 0; i < 15; i += 3) {
-        
-        if (caseIndex == 0) {
-            // emiteBaseTriangles(caseIndex);
-        }
 
         // Stop when no more triangles
         if (triangleIndices[i] == -1) break;
@@ -211,8 +207,6 @@ void emitTriangles(int caseIndex, ivec3 voxelCoord, float densities[8], vec3 nor
         vec3 v0_uv = push.worldOffset + v0 * push.scale/32;
         vec3 v1_uv = push.worldOffset + v1 * push.scale/32;
         vec3 v2_uv = push.worldOffset + v2 * push.scale/32;
-
-
 
         vec2 uv0 = generateCylindricalUV(mod(v0_uv, 7.), push.worldOffset.z + v0.z / 32, zMin, zMax);
         vec2 uv1 = generateCylindricalUV(mod(v1_uv, 7.), push.worldOffset.z + v1.z / 32, zMin, zMax);
@@ -262,14 +256,6 @@ void main() {
 
     // Fetch normals from the normal map
     vec3 normals[8];
-    // normals[0] = imageLoad(normalMap, voxelCoord).rgb;
-    // normals[1] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 0)).rgb;
-    // normals[2] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 0)).rgb;
-    // normals[3] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 0)).rgb;
-    // normals[4] = imageLoad(normalMap, voxelCoord + ivec3(0, 0, 1)).rgb;
-    // normals[5] = imageLoad(normalMap, voxelCoord + ivec3(0, 1, 1)).rgb;
-    // normals[6] = imageLoad(normalMap, voxelCoord + ivec3(1, 1, 1)).rgb;
-    // normals[7] = imageLoad(normalMap, voxelCoord + ivec3(1, 0, 1)).rgb;
 
     normals[0] = fetchNormal(voxelCoord);
     normals[1] = fetchNormal(voxelCoord + ivec3(0, 1, 0));
