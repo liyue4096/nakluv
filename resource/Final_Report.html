@@ -1,0 +1,227 @@
+<p><strong></strong> Summarize, in about one paragraph, your approach to
+the Final Project. How did you structure your code? What’s cool about
+it? Are there parts you weren’t able to complete?</p>
+<p>The key function of the final project is<br />
+<code>void Tutorial::run_terrain_generation(std::vector&lt;BlockCoord&gt; &amp;blocks)</code>,
+which utilizes two compute shaders to accomplish terrain generation. The
+program allocates GPU memory and descriptor sets to store the resulting
+vertices, indexed by their coordinates. A hash map is employed to handle
+evicted blocks in cases of collisions. During the rendering stage, only
+the blocks within the camera’s frustum are processed for rendering.</p>
+<p>The remarkable feature of the application is its ability to
+dynamically generate terrain over vast distances as the camera moves.
+However, one limitation of the design is that it allocates a fixed
+memory size of 2.88MB for each block, and with a block pool size of
+1024, this can lead to inefficient GPU memory usage.</p>
+<p><strong>My Scene</strong><br />
+Describe the scene you made, and include a screen recording showing it
+running in real-time:</p>
+<p>This scene is composed of sine waves, square waves, Perlin noise, and
+a ball density function.</p>
+<figure>
+<img src="4-5.png" style="width:100.0%" />
+<figcaption>Scene Screenshot</figcaption>
+</figure>
+<figure>
+<img src="4-4.png" style="width:100.0%" />
+<figcaption>Scene Screenshot</figcaption>
+</figure>
+<p>For the video demonstration, click the link below:</p>
+<p><a
+href="https://drive.google.com/file/d/1KtvcRVU5cjGaJ5jCwYji2DanO_w2Cx2O/view?usp=drive_link">Play
+Recording.mp4</a></p>
+<p><strong>Loading PTERRAIN objects</strong><br />
+Cover, at least: how data moves from "PTERRAIN"s stored in an s72 file
+to the in-memory representation used by your renderer.<br />
+</p>
+<pre><code>// JSON-based format object:
+{
+	&quot;type&quot;:&quot;PTERRAIN&quot;,
+	&quot;name&quot;:&quot;terrain&quot;,
+	&quot;length&quot;:32,
+	&quot;depth&quot;:32,
+	&quot;octaves&quot;:6,
+	&quot;persistence&quot;:2,
+	&quot;scale&quot;:1,
+	&quot;heightLimit&quot;:3,
+	&quot;blockSize&quot;:1,
+	&quot;material&quot;:&quot;lambertian:terrain&quot;
+}</code></pre>
+<ul>
+<li><p><code>"length"</code>: 3D texture length and width.</p></li>
+<li><p><code>"depth"</code>: 3D texture depth.</p></li>
+<li><p><code>"octaves"</code>, <code>"persistence"</code>,
+<code>"scale"</code>: Control parameters for the Perlin noise
+function.</p></li>
+<li><p><code>"heightLimit"</code>: Maximum height of the model in world
+coordinates.</p></li>
+<li><p><code>"blockSize"</code>: Size of each 3D texture block.</p></li>
+<li><p><code>"material"</code>: Terrain control material.</p></li>
+</ul>
+<pre><code>// global variable
+PTerrainObject terrain;
+std::unordered_map&lt;int, BlockCoord&gt; index_terrain_map;        //index-block
+std::unordered_map&lt;long long, bool&gt; terrain_empty_block_map;  // save empty block hash</code></pre>
+<figure id="fig:pipeline_diagram">
+
+<figcaption>Pipeline Diagram for Terrain Generation</figcaption>
+</figure>
+<p><strong>Generating Terrain</strong></p>
+<div id="tab:update_render_functions">
+<table>
+<caption>Description of <code>update()</code> and <code>render()</code>
+Functions</caption>
+<thead>
+<tr>
+<th style="text-align: left;"><strong>Function</strong></th>
+<th style="text-align: left;"><strong>Description</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>update()</code></td>
+<td style="text-align: left;">Sets 27 blocks in a 3×3×3 grid around the
+center view direction in the <span
+class="math inline"><em>z</em> = 0</span> plane as target blocks and
+updates the <code>index_terrain_map</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>render()</code></td>
+<td style="text-align: left;">Iterates over all blocks in
+<code>index_terrain_map</code>. Performs view frustum culling, sorts the
+blocks by their distance to the camera, and executes
+<code>vkCmdDraw</code> for each block.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Generating the Polygons Within a Block of
+Terrain</strong></p>
+<p>First, we use the VUlkan’s compute shader (CS) to evaluate the
+complex density function at every cell corner within the block and store
+the results in a large 3D texture.</p>
+<p>Next, we visit each voxel and generate actual polygons within it, if
+necessary. The polygons are streamed out to a vertex buffer, where they
+can be kept and repeatedly rendered to the screen until they are no
+longer visible.<br />
+<strong>Making an Interesting Density Function</strong></p>
+<p>I use sine, square and other density functions to introduce
+fluctuations. However, certain combinations of control parameters can
+cause disruptions in the density function, leading to missing parts in
+the final output mesh.</p>
+<figure>
+<img src="4-1.png" style="width:100.0%" />
+<figcaption>Scene Screenshot</figcaption>
+</figure>
+<figure>
+<img src="4-3.png" style="width:100.0%" />
+<figcaption>Scene Screenshot</figcaption>
+</figure>
+<p><strong>Generating the Polygons</strong></p>
+<p>For each small block, the compute shader generates and streams out up
+to 15 vertices (5 triangles) per voxel.</p>
+<pre><code>void emitTriangles(int caseIndex, ivec3 voxelCoord, 
+    float densities[8], vec3 normals[8]) {
+    
+    // Lookup the triangle configuration based on caseIndex
+    int[15] triangleIndices = TRI_TABLE[caseIndex];
+    float zMin, zMax;
+    zMin = 0, zMax = 3;
+
+    for (int i = 0; i &lt; 15; i += 3) {
+        // Stop when no more triangles
+        if (triangleIndices[i] == -1) break;
+
+        // Interpolate positions and normals
+        vec3 v0 = interpolateVertex(voxelCoord, densities, triangleIndices[i]);
+        vec3 n0 = interpolateNormal(normals, triangleIndices[i]);
+
+        vec3 v1 = interpolateVertex(voxelCoord, densities, triangleIndices[i + 1]);
+        vec3 n1 = interpolateNormal(normals, triangleIndices[i + 1]);
+
+        vec3 v2 = interpolateVertex(voxelCoord, densities, triangleIndices[i + 2]);
+        vec3 n2 = interpolateNormal(normals, triangleIndices[i + 2]);
+
+        // Generate UVs for each vertex based on cylindrical mapping
+        ...
+
+        // Atomically allocate space for 3 vertices
+        uint baseIndex = atomicAdd(vertexCount, 3);
+
+        // Write positions and normals to the buffer
+        vertices[baseIndex + 0].pos = v0/32;
+        vertices[baseIndex + 0].normal = n0;
+        vertices[baseIndex + 0].texCoord = uv0;
+
+        vertices[baseIndex + 1].pos = v1/32;
+        vertices[baseIndex + 1].normal = n1;
+        vertices[baseIndex + 1].texCoord = uv1;
+
+        vertices[baseIndex + 2].pos = v2/32;
+        vertices[baseIndex + 2].normal = n2;
+        vertices[baseIndex + 2].texCoord = uv2;
+    }
+}</code></pre>
+<p><strong>Performance</strong></p>
+<p>Compare the performance impact of terrain block sizes in a demo
+terrain. Larger blocks mean less CPU work, but take longer to render and
+might result in more GPU work</p>
+<div id="tab:runtime_comparison">
+<table>
+<caption>Run time comparison for 3D textures on CPU and GPU.</caption>
+<thead>
+<tr>
+<th style="text-align: left;"><strong>Texture Size and
+Blocks</strong></th>
+<th style="text-align: center;"><strong>CPU Run Time (µs)</strong></th>
+<th style="text-align: center;"><strong>GPU Run Time (µs)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">32 <span class="math inline">×</span> 32
+<span class="math inline">×</span> 32 (9 <span
+class="math inline">×</span> 9 blocks)</td>
+<td style="text-align: center;">160.762</td>
+<td style="text-align: center;">10778.140</td>
+</tr>
+<tr>
+<td style="text-align: left;">64 <span class="math inline">×</span> 64
+<span class="math inline">×</span> 64 (4 <span
+class="math inline">×</span> 5 blocks)</td>
+<td style="text-align: center;">39.433</td>
+<td style="text-align: center;">12133.002</td>
+</tr>
+<tr>
+<td style="text-align: left;">96 <span class="math inline">×</span> 96
+<span class="math inline">×</span> 96 (3 <span
+class="math inline">×</span> 3 blocks)</td>
+<td style="text-align: center;">21.316</td>
+<td style="text-align: center;">13167.654</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The CPU part primarily involves recording and sorting the distances
+to the camera, which is an <span
+class="math inline"><em>O</em>(<em>n</em>log <em>n</em>)</span>
+operation. As the texture size increases, the pool size decreases,
+reducing the computational load.</p>
+<p>The GPU part measures the block generation time. Since the local
+workgroup size is fixed at <span class="math inline">4 × 4 × 4</span>,
+larger texture sizes result in more workgroups being created, which in
+turn increases the overhead associated with managing these additional
+workgroups.</p>
+<p><strong>Sample Scene</strong></p>
+<pre><code>.\bin\viewer.exe --scene lights-Spot-Shadows.s72</code></pre>
+<p><strong>Controls</strong></p>
+<div class="tabbing">
+<p>Number key 1 S̄witch between scene cameras.<br />
+Number key 2 Switch to the user camera.<br />
+– Keys W/A/S/D Move the camera in user camera mode.<br />
+– Keys E/Left Ctrl Move the camera up/down in user camera mode.<br />
+– Mouse button Rotate the camera view in user camera mode.<br />
+Number key 3 Switch to the debug/culling camera.<br />
+Spacebar Play/Pause the animation.<br />
+</p>
+</div>

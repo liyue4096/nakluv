@@ -63,10 +63,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 	shadow_pipeline.create(rtg, shadow_map_render_pass, 0);
 
 	// terrain specific pipelines
-	pterrain_noise_pipeline.create(rtg);
-	create_shared_descriptor_layout();
-	pterrain_pipeline.create(rtg);
-	pterrain_triangle_pipeline.create(rtg);
+	if (s72_scene.terrain.name != "")
+	{
+		pterrain_noise_pipeline.create(rtg);
+		create_shared_descriptor_layout();
+		pterrain_pipeline.create(rtg);
+		pterrain_triangle_pipeline.create(rtg);
+	}
 
 	// create descriptor pool:
 	create_description_pool();
@@ -138,6 +141,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_)
 		setup_shadow_image();
 		setup_shadow_views_sample();
 		create_shadow_framebuffer();
+		printf("setup_shadow_image...done\n");
 	}
 
 	{ // terrain
@@ -259,7 +263,10 @@ Tutorial::~Tutorial()
 	}
 	textures.clear();
 
-	vkDestroyFence(rtg.device, fence, nullptr);
+	if (s72_scene.terrain.name != "")
+	{
+		vkDestroyFence(rtg.device, fence, nullptr);
+	}
 
 	for (VkImageView &view : terrain_normal_views)
 	{
@@ -1308,9 +1315,16 @@ void Tutorial::shadow_render(RTG::RenderParams const &render_params)
 	submit_info.commandBufferCount = 1;
 	submit_info.pCommandBuffers = &workspace.shadow_map_cmd_buf;
 
-	VK(vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, fence));
-	vkWaitForFences(rtg.device, 1, &fence, VK_TRUE, 100000000); // 100ms
-	vkResetFences(rtg.device, 1, &fence);
+	if (s72_scene.terrain.name == "")
+	{
+		VK(vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, NULL));
+	}
+	else
+	{
+		VK(vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, fence));
+		vkWaitForFences(rtg.device, 1, &fence, VK_TRUE, 100000000); // 100ms
+		vkResetFences(rtg.device, 1, &fence);
+	}
 }
 
 void Tutorial::render_pass_command(RTG::RenderParams const &render_params, VkFramebuffer &framebuffer)
@@ -1367,7 +1381,10 @@ void Tutorial::render_pass_command(RTG::RenderParams const &render_params, VkFra
 	}
 
 	// draw terrain here
-	render_terrain(workspace);
+	if (s72_scene.terrain.name != "")
+	{
+		render_terrain(workspace);
+	}
 
 	if (!scene_instances.empty())
 	{ // draw with the scene pipeline:
